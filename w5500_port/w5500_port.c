@@ -229,10 +229,17 @@ static int W5500_DHCP_Init(void){
 
 
 static int W5500_DHCP_Connect(uint32_t timeout_ms){
+    
+    if(W5500_DHCP_Init() != 0){
+        return -1;
+    }
+
     absolute_time_t start = get_absolute_time();
     absolute_time_t last_tick = start;
 
-    while (absolute_time_diff_us(start, get_absolute_time()) < timeout_ms * 1000) {
+    uint64_t timeout_us = (uint64_t)timeout_ms *1000;
+
+    while (absolute_time_diff_us(start, get_absolute_time()) < timeout_us) {
         DHCP_run();
         absolute_time_t now = get_absolute_time();
 
@@ -248,7 +255,7 @@ static int W5500_DHCP_Connect(uint32_t timeout_ms){
         sleep_ms(10);
     }
 
-    return -1;
+    return -2;
 }
 
 
@@ -264,9 +271,11 @@ int W5500_Connect(void){
     }
 
     if (g_conn.use_dhcp) {
-        //tutaj dhcp musi byc juz po init i po dhcp_run
-    } else {
-        ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo);
+        return W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS);
+    } 
+
+    if (ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo) == -1) {
+        return -4;
     }
 
     return 0;
@@ -276,8 +285,6 @@ int W5500_Connect(void){
 
 /////////////////////////////////////////////////
 // TODO
-
-int W5500_Connect(void);
 
 bool W5500_HasServerConfig(void);
 
