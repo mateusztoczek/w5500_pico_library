@@ -16,6 +16,10 @@
 #define SOCK_UDP 2
 #define W5500_DHCP_DEFAULT_TIMEOUT_MS 10000u
 
+#define W5500_CFG_FLAG_SERVER_CONFIGURED  (1u << 0)
+#define W5500_CFG_FLAG_PROVISIONED        (1u << 1)
+#define W5500_CFG_FLAG_TOKEN_VALID        (1u << 2)
+
 static W5500_Board_Config_t g_board;
 static W5500_Network_Config_t g_conn;
 static wiz_NetInfo g_netinfo;
@@ -282,11 +286,39 @@ int W5500_Connect(void){
 }
 
 
+static bool W5500_ServerConfig_IsValid(void){
+
+    if (!(g_conn.config_flags & W5500_CFG_FLAG_SERVER_CONFIGURED)) {
+        return false;
+    }
+
+    if (!w5500_is_valid_ipv4_addr(g_conn.server_ip)) {
+        return false;
+    }
+
+    if (g_conn.server_port == 0){
+        return false;
+    }
+
+    if (g_conn.http_path[0] == '\0'){
+        return false;
+    }
+
+    return true;
+
+}
+
+int W5500_Ensure_ServerConfig(void){
+    if (W5500_ServerConfig_IsValid()) {
+        return 0;
+    }
+
+    return W5500_UDP_Discovery(&g_conn);
+}
+
 
 /////////////////////////////////////////////////
 // TODO
-
-bool W5500_HasServerConfig(void);
 
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
 

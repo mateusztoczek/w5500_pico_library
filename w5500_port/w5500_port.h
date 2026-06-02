@@ -29,6 +29,7 @@ typedef struct {
     uint8_t gw[4];
     uint8_t dns[4];
 
+    uint32_t server_flags;
     uint8_t server_ip[4];
     uint16_t server_port;
     char http_path[64];
@@ -41,9 +42,9 @@ typedef struct {
 
 int W5500_Board_Init(W5500_Board_Config_t *cfg);
 int W5500_Network_Init(const W5500_Network_Config_t *cfg);
-
-int W5500_Connect(void);
 void W5500_PrintConfig(void);
+int W5500_Connect(void);
+int W5500_Ensure_ServerConfig(void);
 int W5500_UDP_Discovery(void);
 int W5500_HTTP_POST(const char* endpoint, const char* payload);
 
