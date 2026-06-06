@@ -21,6 +21,8 @@
 #define W5500_CFG_FLAG_TOKEN_VALID        (1u << 2)
 
 #define W5500_CONFIG_MAGIC 0x57434631u
+#define W5500_MIN_INTERVAL_S 1
+#define W5500_MAX_INTERVAL_S 500
 
 static W5500_Board_Config_t g_board;
 static W5500_Network_Config_t g_conn;
@@ -199,6 +201,12 @@ static bool w5500_is_valid_netmask(const uint8_t sn[4]){
     return (mask & (mask + 1)) == 0;
 }
 
+//TODO: pelnoprawny walidator crc
+static bool w5500_is_valid_crc(const uint32_t crc){
+    if (crc == 0 || crc == 0xFFFFFFFF) return false;
+    return true;
+}
+
 
 int W5500_Network_Init(const W5500_Network_Config_t *cfg){
     if (cfg == NULL) return -1;
@@ -317,36 +325,44 @@ int W5500_Connect(void){
 }
 
 
-static bool W5500_ServerConfig_IsValid(void){
-
-    if (!(g_conn.config_flags & W5500_CFG_FLAG_SERVER_CONFIGURED)) {
-        return false;
-    }
-
-    if (!w5500_is_valid_ipv4_addr(g_conn.server_ip)) {
-        return false;
-    }
-
-    if (g_conn.server_port == 0){
-        return false;
-    }
-
-    if (g_conn.http_path[0] == '\0'){
-        return false;
-    }
+static bool W5500_ServerConfig_IsValid(const W5500_Network_Config_t *cfg){
+    if(cfg == NULL) return false;
+    if (!(cfg->config_flags & W5500_CFG_FLAG_SERVER_CONFIGURED)) return false;
+    if (!w5500_is_valid_ipv4_addr(cfg->server_ip)) return false;
+    if (cfg->server_port == 0) return false;
+    if (cfg->http_path[0] == '\0') return false;
 
     return true;
 
 }
 
-int W5500_Ensure_ServerConfig(void){
-    if (W5500_ServerConfig_IsValid()) {
+
+int W5500_EnsureServerConfig(void){
+    if (W5500_ServerConfig_IsValid(&g_conn)) {
         return 0;
     }
 
     return W5500_UDP_Discovery(&g_conn);
 }
 
+
+static bool W5500_Is_Config_Valid(const W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return false;
+    if(cfg->magic != W5500_CONFIG_MAGIC) return false;
+    if(!w5500_is_valid_crc(cfg->crc)) return false;
+    if(!w5500_is_valid_mac(cfg->mac)) return false;
+    if(cfg-> interval_s < W5500_MIN_INTERVAL_S  || cfg-> interval_s > W5500_MAX_INTERVAL_S) return false; 
+    if(!cfg->use_dhcp){
+        if (!w5500_is_valid_ipv4_addr(cfg->ip)) return false;
+        if (!w5500_is_valid_netmask(cfg->sn)) return false;
+    }
+    
+    if((cfg->config_flags & W5500_CFG_FLAG_SERVER_CONFIGURED) != 0){
+        if (!W5500_ServerConfig_IsValid(cfg)) return false;
+    }
+
+    return true;
+}
 
 /////////////////////////////////////////////////
 // TODO
