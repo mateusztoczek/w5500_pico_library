@@ -20,6 +20,8 @@
 #define W5500_CFG_FLAG_PROVISIONED        (1u << 1)
 #define W5500_CFG_FLAG_TOKEN_VALID        (1u << 2)
 
+#define W5500_CONFIG_MAGIC 0x57434631u
+
 static W5500_Board_Config_t g_board;
 static W5500_Network_Config_t g_conn;
 static wiz_NetInfo g_netinfo;
@@ -112,6 +114,36 @@ int W5500_Board_Init(W5500_Board_Config_t *cfg){
 }
 
 
+static void W5500_New_Local_MAC(uint8_t mac[6]){
+    pico_unique_board_id_t id;
+    pico_get_unique_board_id(&id);
+
+    mac[0] = 0x02;
+    mac[1] = 0x46;
+    mac[2] = 0x52;
+    mac[3] = id.id[5];
+    mac[4] = id.id[6];
+    mac[5] = id.id[7];
+}
+
+
+void W5500_Default_config(W5500_Network_Config_t *cfg){
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->magic = W5500_CONFIG_MAGIC;
+    W5500_New_Local_MAC(cfg->mac);
+    cfg->use_dhcp = true;
+    cfg->server_ip[0] = 0;
+    cfg->server_port = 0;
+    cfg->http_path[0] = '\0';
+    cfg->interval_s = 60;
+    cfg->config_flags = 0;
+}
+
+
+// pobieranie config z flash
+// potem: sprawdzenie czy jest config i czy jest ok. jesli nie ma albo cos jest nie tak idz do default config
+
+
 void W5500_PrintConfig(void) {
     wiz_NetInfo data;
 
@@ -167,7 +199,6 @@ static bool w5500_is_valid_netmask(const uint8_t sn[4]){
     return (mask & (mask + 1)) == 0;
 }
 
-// tutaj jeszzcze jakas funkcja do sprawdzanai config we flash
 
 int W5500_Network_Init(const W5500_Network_Config_t *cfg){
     if (cfg == NULL) return -1;
@@ -319,6 +350,8 @@ int W5500_Ensure_ServerConfig(void){
 
 /////////////////////////////////////////////////
 // TODO
+
+void W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg)
 
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
 
