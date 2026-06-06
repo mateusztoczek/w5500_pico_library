@@ -3,9 +3,11 @@
  
 #include <stdio.h>
 #include <string.h>
+#include <stddef.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
+#include "hardware/flash.h"
 #include "wizchip_conf.h"
 #include "socket.h"
 #include "DHCP/dhcp.h"
@@ -23,6 +25,12 @@
 #define W5500_CONFIG_MAGIC 0x57434631u
 #define W5500_MIN_INTERVAL_S 1
 #define W5500_MAX_INTERVAL_S 500
+
+typedef enum {
+    W5500_CONFIG_RESULT_ERROR = -1,
+    W5500_CONFIG_RESULT_LOADED = 1,
+    W5500_CONFIG_RESULT_DEFAULT_CREATED = 2
+} W5500_Config_Result_t;
 
 static W5500_Board_Config_t g_board;
 static W5500_Network_Config_t g_conn;
@@ -201,10 +209,40 @@ static bool w5500_is_valid_netmask(const uint8_t sn[4]){
     return (mask & (mask + 1)) == 0;
 }
 
-//TODO: pelnoprawny walidator crc
-static bool w5500_is_valid_crc(const uint32_t crc){
-    if (crc == 0 || crc == 0xFFFFFFFF) return false;
-    return true;
+
+static uint32_t w5500_crc32_compute(const void *data, size_t len){
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFFu;
+
+    for (size_t i = 0; i < len; i++) {
+        crc ^= bytes[i];
+        for (int bit = 0; bit < 8; bit++) {
+            if (crc & 1u) crc = (crc >> 1) ^ 0xEDB88320u;
+            else crc >>= 1;
+        }
+    }
+
+    return ~crc;
+}
+
+static bool w5500_is_valid_crc(const W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return false;
+    if (cfg->crc == 0u || cfg->crc == 0xFFFFFFFFu) return false;
+    uint32_t calculated_crc = w5500_crc32_compute(cfg, offsetof(W5500_Network_Config_t, crc));
+
+    return calculated_crc == cfg->crc;
+}
+
+
+// pobieranie config z flash
+// potem: sprawdzenie czy jest config i czy jest ok. jesli nie ma albo cos jest nie tak idz do default config
+static int W5500_Load_Flash_Config(W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return -1;
+
+    const uint8_t *flash_ptr = (const uint8_t *)(XIP_BASE + CONFIG_FLASH_OFFSET);
+    memcpy(cfg, flash_ptr, sizeof(W5500_Network_Config_t));
+
+    return 0;
 }
 
 
@@ -364,10 +402,20 @@ static bool W5500_Is_Config_Valid(const W5500_Network_Config_t *cfg){
     return true;
 }
 
+//TODO: Save config
+
+W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg){
+    if(cfg == NULL) return W5500_CONFIG_RESULT_ERROR;
+    if(W5500_Load_Flash_Config(cfg) == 0){
+        if(W5500_Is_Config_Valid(cfg)) return W5500_CONFIG_RESULT_LOADED;
+    }
+    W5500_Default_config(cfg);
+    
+    return W5500_CONFIG_RESULT_DEFAULT_CREATED;
+}
+
 /////////////////////////////////////////////////
 // TODO
-
-void W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg)
 
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
 
