@@ -3,6 +3,7 @@
  
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <stddef.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
@@ -41,6 +42,7 @@ static bool g_conn_initialized = true;
 
 static volatile bool g_dhcp_ip_found = false;
 static uint8_t g_dhcp_buffer[1024];
+static uint8_t g_udp_discover_buffer[1024];
 
 
 static void w5500_cs_select(void){
@@ -414,10 +416,49 @@ W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg){
     return W5500_CONFIG_RESULT_DEFAULT_CREATED;
 }
 
+
+static int build_discover_message(const W5500_Network_Config_t *cfg, uint8_t *buffer, size_t buffer_size) {
+    if (cfg == NULL || buffer == NULL || buffer_size == 0) return -1;
+
+    int len = snprintf((char *)buffer, buffer_size,
+        "DISCOVER freezer_sensor_v1 mac=%02X:%02X:%02X:%02X:%02X:%02X fw=0.1.0 hw=w5500-pico",
+        cfg->mac[0], cfg->mac[1], cfg->mac[2], cfg->mac[3], cfg->mac[4], cfg->mac[5]
+    );
+    
+    if (len < 0) return -2;
+    if ((size_t)len >= buffer_size) return -3;
+
+    return len;
+}
+
+
+int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return -1;
+    if (!w5500_is_valid_mac(cfg->mac)) return -2;
+
+    int8_t r = socket(SOCK_DISCOVERY, Sn_MR_UDP, DISCOVERY_LOCAL_PORT, 0);
+    if (r != SOCK_DISCOVERY) return -3;
+
+    int msg_len = build_discover_message(cfg, g_udp_discover_buffer, sizeof(g_udp_discover_buffer));
+    if (msg_len < 0) {
+        close(SOCK_DISCOVERY);
+        return -4;
+    }
+
+    uint8_t broadcast_ip[4] = {255, 255, 255, 255};
+
+    int32_t sent = sendto(SOCK_DISCOVERY, g_udp_discover_buffer, (uint16_t)msg_len, broadcast_ip, DISCOVERY_SERVER_PORT);
+    if (sent != msg_len) {
+        close(SOCK_DISCOVERY);
+        return -5;
+    }
+
+    close(SOCK_DISCOVERY);
+    return 0;
+}
+
 /////////////////////////////////////////////////
 // TODO
-
-int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
 
 int W5500_HTTP_POST(const char *endpoint, const char *payload);
 
