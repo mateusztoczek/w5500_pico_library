@@ -13,17 +13,22 @@
 #include "socket.h"
 #include "DHCP/dhcp.h"
 #include "DNS/dns.h"
+#include "pico/unique_id.h"
+
+#define CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define DISCOVERY_LOCAL_PORT 50000
+#define DISCOVERY_SERVER_PORT 40001
 
 #define SOCK_DHCP 0
 #define SOCK_HTTP 1
-#define SOCK_UDP 2
+#define SOCK_DISCOVERY 2
+
 #define W5500_DHCP_DEFAULT_TIMEOUT_MS 10000u
 
-#define W5500_CFG_FLAG_SERVER_CONFIGURED  (1u << 0)
-#define W5500_CFG_FLAG_PROVISIONED        (1u << 1)
-#define W5500_CFG_FLAG_TOKEN_VALID        (1u << 2)
+#define W5500_CFG_FLAG_SERVER_CONFIGURED (1u << 0)
+#define W5500_CFG_FLAG_PROVISIONED (1u << 1)
+#define W5500_CFG_FLAG_TOKEN_VALID (1u << 2)
 
-#define W5500_CONFIG_MAGIC 0x57434631u
 #define W5500_MIN_INTERVAL_S 1
 #define W5500_MAX_INTERVAL_S 500
 
@@ -68,10 +73,11 @@ static void w5500_spi_read_burst(uint8_t *buf, uint16_t len){
     spi_read_blocking(g_board.spi_port, 0x00, buf, len);
 }
 
-static void w5500_spi_write_burst(const uint8_t *buf, uint16_t len){
+static void w5500_spi_write_burst(uint8_t *buf, uint16_t len){
     if (buf == NULL || len == 0) return;
     spi_write_blocking(g_board.spi_port, buf, len);
 }
+
 
 void w5500_reset(void){
     gpio_put(g_board.rst_pin, 0);
@@ -150,10 +156,6 @@ void W5500_Default_config(W5500_Network_Config_t *cfg){
     cfg->interval_s = 60;
     cfg->config_flags = 0;
 }
-
-
-// pobieranie config z flash
-// potem: sprawdzenie czy jest config i czy jest ok. jesli nie ma albo cos jest nie tak idz do default config
 
 
 void W5500_PrintConfig(void) {
@@ -284,16 +286,16 @@ static void DHCP_IP_Assigned(void){
     g_netinfo.dhcp = NETINFO_DHCP;
 
     ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo);
-    dhcp_ip_found = true;
+    g_dhcp_ip_found = true;
 }
 
 static void DHCP_IP_Updated(void){
-    dhcp_ip_found = true;
+    g_dhcp_ip_found = true;
     //TODO
 }
 
 static void DHCP_IP_Conflict(void){
-    dhcp_ip_found = false;
+    g_dhcp_ip_found = false;
 }
 
 
@@ -312,7 +314,7 @@ static int W5500_DHCP_Init(void){
 
 
 static int W5500_DHCP_Connect(uint32_t timeout_ms){
-    
+
     if(W5500_DHCP_Init() != 0){
         return -1;
     }
@@ -320,7 +322,7 @@ static int W5500_DHCP_Connect(uint32_t timeout_ms){
     absolute_time_t start = get_absolute_time();
     absolute_time_t last_tick = start;
 
-    uint64_t timeout_us = (uint64_t)timeout_ms *1000;
+    int64_t timeout_us = (int64_t)timeout_ms * 1000;
 
     while (absolute_time_diff_us(start, get_absolute_time()) < timeout_us) {
         DHCP_run();
@@ -352,10 +354,9 @@ int W5500_Connect(void){
     if (link != PHY_LINK_ON) {
         return -3;
     }
-
     if (g_conn.use_dhcp) {
         return W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS);
-    } 
+    }
 
     if (ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo) == -1) {
         return -4;
@@ -377,19 +378,10 @@ static bool W5500_ServerConfig_IsValid(const W5500_Network_Config_t *cfg){
 }
 
 
-int W5500_EnsureServerConfig(void){
-    if (W5500_ServerConfig_IsValid(&g_conn)) {
-        return 0;
-    }
-
-    return W5500_UDP_Discovery(&g_conn);
-}
-
-
 static bool W5500_Is_Config_Valid(const W5500_Network_Config_t *cfg){
     if (cfg == NULL) return false;
     if(cfg->magic != W5500_CONFIG_MAGIC) return false;
-    if(!w5500_is_valid_crc(cfg->crc)) return false;
+    if(!w5500_is_valid_crc(cfg)) return false;
     if(!w5500_is_valid_mac(cfg->mac)) return false;
     if(cfg-> interval_s < W5500_MIN_INTERVAL_S  || cfg-> interval_s > W5500_MAX_INTERVAL_S) return false; 
     if(!cfg->use_dhcp){
@@ -403,6 +395,7 @@ static bool W5500_Is_Config_Valid(const W5500_Network_Config_t *cfg){
 
     return true;
 }
+
 
 //TODO: Save config
 
@@ -431,7 +424,6 @@ static int build_discover_message(const W5500_Network_Config_t *cfg, uint8_t *bu
     return len;
 }
 
-
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
     if (cfg == NULL) return -1;
     if (!w5500_is_valid_mac(cfg->mac)) return -2;
@@ -457,8 +449,19 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
     return 0;
 }
 
+
+int W5500_EnsureServerConfig(void){
+    if (W5500_ServerConfig_IsValid(&g_conn)) {
+        return 0;
+    }
+
+    return W5500_UDP_Discovery(&g_conn);
+}
+
+
+
 /////////////////////////////////////////////////
 // TODO
 
-int W5500_HTTP_POST(const char *endpoint, const char *payload);
+//int W5500_HTTP_POST(const char *endpoint, const char *payload);
 
