@@ -32,6 +32,14 @@
 #define W5500_MIN_INTERVAL_S 1
 #define W5500_MAX_INTERVAL_S 500
 
+#define W5500_LINK_TIMEOUT_MS 5000
+#define W5500_LINK_POLL_MS 100
+
+#define DISCOVERY_MAX_ATTEMPTS 5
+#define DISCOVERY_RESPONSE_TIMEOUT_MS 2000
+#define DISCOVERY_POLL_MS 10
+
+
 typedef enum {
     W5500_CONFIG_RESULT_ERROR = -1,
     W5500_CONFIG_RESULT_LOADED = 1,
@@ -207,10 +215,13 @@ static bool w5500_is_valid_ipv4_addr(const uint8_t ip[4]){
 
 
 static bool w5500_is_valid_netmask(const uint8_t sn[4]){
-    uint32_t mask = ((uint32_t)sn[0] << 24) | ((uint32_t)sn[1] << 16) | ((uint32_t)sn[2] << 8) | ((uint32_t)sn[3]);
-    if (mask == 0 || mask == 0xFFFFFFFF) return false;
+    if (sn == NULL) return false;
 
-    return (mask & (mask + 1)) == 0;
+    uint32_t mask = ((uint32_t)sn[0] << 24) | ((uint32_t)sn[1] << 16) | ((uint32_t)sn[2] << 8) | ((uint32_t)sn[3]);
+    if (mask == 0u || mask == 0xFFFFFFFFu) return false;
+    uint32_t inv = ~mask;
+
+    return (inv & (inv + 1u)) == 0u;
 }
 
 
@@ -344,23 +355,30 @@ static int W5500_DHCP_Connect(uint32_t timeout_ms){
 }
 
 
+static int W5500_Ethernet_Link(uint32_t timeout_ms){
+    uint8_t link = PHY_LINK_OFF;
+    uint32_t time_ms = 0;
+
+    while (time_ms < timeout_ms) {
+        if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -1;
+        if (link == PHY_LINK_ON) return 0;
+        sleep_ms(W5500_LINK_POLL_MS);
+        time_ms += W5500_LINK_POLL_MS;
+    }
+
+    return -2;
+}
+
+
 int W5500_Connect(void){
     if (!g_board_initialized) return -1;
     if (!g_conn_initialized) return -2;
 
-    uint8_t link = PHY_LINK_OFF;
-    ctlwizchip(CW_GET_PHYLINK, &link);
+    int link_ret = W5500_Ethernet_Link(W5500_LINK_TIMEOUT_MS);
+    if (link_ret != 0) return -3;
 
-    if (link != PHY_LINK_ON) {
-        return -3;
-    }
-    if (g_conn.use_dhcp) {
-        return W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS);
-    }
-
-    if (ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo) == -1) {
-        return -4;
-    }
+    if (g_conn.use_dhcp) return W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS);
+    if (ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo) == -1) return -4;
 
     return 0;
 }
@@ -410,7 +428,7 @@ W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg){
 }
 
 
-static int build_discover_message(const W5500_Network_Config_t *cfg, uint8_t *buffer, size_t buffer_size) {
+static int UDP_BuildDiscover(const W5500_Network_Config_t *cfg, uint8_t *buffer, size_t buffer_size) {
     if (cfg == NULL || buffer == NULL || buffer_size == 0) return -1;
 
     int len = snprintf((char *)buffer, buffer_size,
@@ -424,31 +442,98 @@ static int build_discover_message(const W5500_Network_Config_t *cfg, uint8_t *bu
     return len;
 }
 
+//CONFIG freezer_sensor_v1 device_id=freezer-test-001 server_ip=192.168.1.100 server_port=8090 http_path=/measurement interval_s=10
+static int UDP_ParseResponse(const char *response, const uint8_t remote_ip[4], W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return -1;
+
+}
+
+
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
     if (cfg == NULL) return -1;
     if (!w5500_is_valid_mac(cfg->mac)) return -2;
 
+    close(SOCK_DISCOVERY);
+    sleep_ms(10);
+
     int8_t r = socket(SOCK_DISCOVERY, Sn_MR_UDP, DISCOVERY_LOCAL_PORT, 0);
     if (r != SOCK_DISCOVERY) return -3;
 
-    int msg_len = build_discover_message(cfg, g_udp_discover_buffer, sizeof(g_udp_discover_buffer));
-    if (msg_len < 0) {
+    uint8_t sr = getSn_SR(SOCK_DISCOVERY);
+    if (sr != SOCK_UDP) {
         close(SOCK_DISCOVERY);
         return -4;
     }
 
-    uint8_t broadcast_ip[4] = {255, 255, 255, 255};
-
-    int32_t sent = sendto(SOCK_DISCOVERY, g_udp_discover_buffer, (uint16_t)msg_len, broadcast_ip, DISCOVERY_SERVER_PORT);
-    if (sent != msg_len) {
+    int msg_len = build_discover_message(cfg, g_udp_discover_buffer, sizeof(g_udp_discover_buffer));
+    if (msg_len < 0) {
         close(SOCK_DISCOVERY);
         return -5;
     }
 
-    close(SOCK_DISCOVERY);
-    return 0;
-}
+    //uint8_t target_ip[4] = {192, 168, 1, 100};
+    uint8_t target_ip[4] = {255, 255, 255, 255};
 
+    for (int attempt = 1; attempt <= DISCOVERY_MAX_ATTEMPTS; attempt++) {
+   
+        printf("Sending UDP DISCOVER to %u.%u.%u.%u:%u\r\n", target_ip[0], target_ip[1], target_ip[2], target_ip[3], DISCOVERY_SERVER_PORT);
+
+        int32_t sent = sendto(
+            SOCK_DISCOVERY,
+            g_udp_discover_buffer,
+            (uint16_t)msg_len,
+            target_ip,
+            DISCOVERY_SERVER_PORT
+        );
+
+        if (sent != msg_len) {
+            printf("sendto failed on attempt %d\r\n", attempt);
+            sleep_ms(100);
+            continue;
+        }
+
+        absolute_time_t start = get_absolute_time();
+        while (absolute_time_diff_us(start, get_absolute_time()) < (int64_t)DISCOVERY_RESPONSE_TIMEOUT_MS * 1000) {
+
+            uint16_t rx_size = getSn_RX_RSR(SOCK_DISCOVERY);
+            if (rx_size > 0) {
+                if (rx_size >= sizeof(g_udp_discover_buffer)) rx_size = sizeof(g_udp_discover_buffer) - 1;
+
+                uint8_t remote_ip[4] = {0};
+                uint16_t remote_port = 0;
+
+                int32_t received = recvfrom(
+                    SOCK_DISCOVERY,
+                    g_udp_discover_buffer,
+                    rx_size,
+                    remote_ip,
+                    &remote_port
+                );
+
+                if (received > 0) {
+                    g_udp_discover_buffer[received] = '\0';
+                    printf("UDP response: %s\r\n", (char *)g_udp_discover_buffer);
+
+                    int parse_ret = UDP_ParseResponse((char *)g_udp_discover_buffer, remote_ip, cfg);
+                    if (parse_ret == 0 && W5500_ServerConfig_IsValid(cfg)) {
+                        close(SOCK_DISCOVERY);
+                        return 0;
+                    }
+                }
+
+                printf("recvfrom failed\r\n");
+                break;
+            }
+            sleep_ms(DISCOVERY_POLL_MS);
+        }
+        sleep_ms(200);
+    }
+
+    printf("UDP discovery failed: no response\r\n");
+
+    close(SOCK_DISCOVERY);
+    return -6;
+}
 
 int W5500_EnsureServerConfig(void){
     if (W5500_ServerConfig_IsValid(&g_conn)) {
