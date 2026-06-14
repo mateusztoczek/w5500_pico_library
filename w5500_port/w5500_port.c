@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <stddef.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
@@ -442,10 +443,88 @@ static int UDP_BuildDiscover(const W5500_Network_Config_t *cfg, uint8_t *buffer,
     return len;
 }
 
-//CONFIG freezer_sensor_v1 device_id=freezer-test-001 server_ip=192.168.1.100 server_port=8090 http_path=/measurement interval_s=10
-static int UDP_ParseResponse(const char *response, const uint8_t remote_ip[4], W5500_Network_Config_t *cfg){
-    if (cfg == NULL) return -1;
 
+static int UDP_ParseAddress(const char *text, uint8_t ip[4]){
+    if (text == NULL || ip == NULL) return -1;
+
+    unsigned int a, b, c, d;
+    if (sscanf(text, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) return -2;
+    if (a > 255 || b > 255 || c > 255 || d > 255) return -3;
+
+    ip[0]= (uint8_t)a;
+    ip[1]= (uint8_t)b;
+    ip[2]= (uint8_t)c;
+    ip[3]= (uint8_t)d;
+
+    return 0;
+}
+
+
+static int UDP_ExtractValue(const char *text, const char *key, char *out, size_t out_size){
+    if (text == NULL || key == NULL || out == NULL || out_size == 0) return -1;
+
+    const char *start = strstr(text, key);
+    if (start == NULL) return -2;
+    start += strlen(key);
+
+    const char *end = strchr(start, ' ');
+    size_t len;
+
+    if (end != NULL) {
+        len = (size_t)(end - start);
+    } else {
+        len = strlen(start);
+    }
+
+    if (len == 0) return -3;
+    if (len >= out_size) return -4;
+
+    memcpy(out, start, len);
+    out[len] = '\0';
+
+    return 0;
+}
+
+
+//example response: CONFIG freezer_sensor_v1 device_id=freezer-test-001 server_ip=192.168.1.100 server_port=8090 http_path=/measurement interval_s=10
+static int UDP_ParseDiscovery(const char *response, const uint8_t remote_ip[4], W5500_Network_Config_t *cfg){
+    if (response == NULL || cfg == NULL) return -1;
+    if (strstr(response, "CONFIG freezer_sensor_v1") == NULL) return -2;
+
+    char device_id[32];
+    char server_ip_text[24];
+    char server_port_text[8];
+    char http_path[64];
+    char interval_text[12];
+    uint8_t server_ip[4];
+    unsigned long server_port_ul;
+    unsigned long interval_ul;
+
+    if(UDP_ExtractValue(response, "device_id=", device_id, sizeof(device_id)) != 0) return -3;
+    if(UDP_ExtractValue(response, "server_ip=", server_ip_text, sizeof(server_ip_text)) != 0) return -4;
+    if(UDP_ParseAddress(server_ip_text, server_ip) != 0) return -5;
+    if(UDP_ExtractValue(response, "server_port=", server_port_text, sizeof(server_port_text)) != 0) return -6;
+
+    server_port_ul = strtoul(server_port_text, NULL, 10);
+    if(server_port_ul == 0 || server_port_ul > 65535) return -7;
+    if(UDP_ExtractValue(response, "http_path=", http_path, sizeof(http_path)) != 0) return -8;
+    if(http_path[0] != '/') return -9;
+    if(UDP_ExtractValue(response, "interval_s=", interval_text, sizeof(interval_text)) != 0) return -10;
+
+    interval_ul = strtoul(interval_text, NULL, 10);
+    if(interval_ul < W5500_MIN_INTERVAL_S || interval_ul > W5500_MAX_INTERVAL_S) return -11;
+
+    memset(cfg->device_id, 0, sizeof(cfg->device_id));
+    strncpy(cfg->device_id, device_id, sizeof(cfg->device_id) - 1);
+    memcpy(cfg->server_ip, server_ip, 4);
+    cfg->server_port = (uint16_t)server_port_ul;
+    memset(cfg->http_path, 0, sizeof(cfg->http_path));
+    strncpy(cfg->http_path, http_path, sizeof(cfg->http_path) - 1);
+    cfg->interval_s = (uint32_t)interval_ul;
+    cfg->config_flags |= W5500_CFG_FLAG_SERVER_CONFIGURED;
+    cfg->config_flags |= W5500_CFG_FLAG_PROVISIONED;
+
+    return 0;
 }
 
 
@@ -465,7 +544,7 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
         return -4;
     }
 
-    int msg_len = build_discover_message(cfg, g_udp_discover_buffer, sizeof(g_udp_discover_buffer));
+    int msg_len = UDP_BuildDiscover(cfg, g_udp_discover_buffer, sizeof(g_udp_discover_buffer));
     if (msg_len < 0) {
         close(SOCK_DISCOVERY);
         return -5;
@@ -475,17 +554,9 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
     uint8_t target_ip[4] = {255, 255, 255, 255};
 
     for (int attempt = 1; attempt <= DISCOVERY_MAX_ATTEMPTS; attempt++) {
-   
         printf("Sending UDP DISCOVER to %u.%u.%u.%u:%u\r\n", target_ip[0], target_ip[1], target_ip[2], target_ip[3], DISCOVERY_SERVER_PORT);
 
-        int32_t sent = sendto(
-            SOCK_DISCOVERY,
-            g_udp_discover_buffer,
-            (uint16_t)msg_len,
-            target_ip,
-            DISCOVERY_SERVER_PORT
-        );
-
+        int32_t sent = sendto(SOCK_DISCOVERY, g_udp_discover_buffer, (uint16_t)msg_len, target_ip, DISCOVERY_SERVER_PORT);
         if (sent != msg_len) {
             printf("sendto failed on attempt %d\r\n", attempt);
             sleep_ms(100);
@@ -502,26 +573,19 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
                 uint8_t remote_ip[4] = {0};
                 uint16_t remote_port = 0;
 
-                int32_t received = recvfrom(
-                    SOCK_DISCOVERY,
-                    g_udp_discover_buffer,
-                    rx_size,
-                    remote_ip,
-                    &remote_port
-                );
-
+                int32_t received = recvfrom(SOCK_DISCOVERY, g_udp_discover_buffer, rx_size, remote_ip, &remote_port);
                 if (received > 0) {
                     g_udp_discover_buffer[received] = '\0';
                     printf("UDP response: %s\r\n", (char *)g_udp_discover_buffer);
 
-                    int parse_ret = UDP_ParseResponse((char *)g_udp_discover_buffer, remote_ip, cfg);
+                    int parse_ret = UDP_ParseDiscovery((char *)g_udp_discover_buffer, remote_ip, cfg );
                     if (parse_ret == 0 && W5500_ServerConfig_IsValid(cfg)) {
                         close(SOCK_DISCOVERY);
                         return 0;
                     }
-                }
 
-                printf("recvfrom failed\r\n");
+                    printf("Invalid CONFIG response, ignoring\r\n");
+                }
                 break;
             }
             sleep_ms(DISCOVERY_POLL_MS);
