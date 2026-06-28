@@ -642,12 +642,31 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
     return -6;
 }
 
+
 int W5500_EnsureServerConfig(void){
-    if (W5500_ServerConfig_IsValid(&g_conn)) {
-        return 0;
+    if (W5500_ServerConfig_IsValid(&g_conn)) return 0;
+
+    int response = W5500_UDP_Discovery(&g_conn);
+    if (response != 0) {
+        printf("UDP discovery failed: %d\r\n", response);
+        stdio_flush();
+        return -1;
+    }
+    
+    if (!W5500_ServerConfig_IsValid(&g_conn)){
+        printf("UDP discovery returned OK, but server config is still invalid\r\n");
+        stdio_flush();
+        return -2;
     }
 
-    return W5500_UDP_Discovery(&g_conn);
+    response = W5500_SaveConfig(&g_conn);
+    if (response != 0) {
+        printf("W5500_SaveConfig failed: %d\r\n", response);
+        stdio_flush();
+        return -3;
+    }
+
+    return 0;
 }
 
 
