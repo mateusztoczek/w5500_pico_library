@@ -9,12 +9,14 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
+#include "hardware/sync.h"
 #include "hardware/flash.h"
 #include "wizchip_conf.h"
 #include "socket.h"
 #include "DHCP/dhcp.h"
 #include "DNS/dns.h"
 #include "pico/unique_id.h"
+
 
 #define CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define DISCOVERY_LOCAL_PORT 50000
@@ -416,7 +418,48 @@ static bool W5500_Is_Config_Valid(const W5500_Network_Config_t *cfg){
 }
 
 
-//TODO: Save config
+static bool W5500_Is_Config_ReadytoSave(const W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return false;
+    if (!w5500_is_valid_mac(cfg->mac)) return false;
+    if (cfg->interval_s < W5500_MIN_INTERVAL_S || cfg->interval_s > W5500_MAX_INTERVAL_S) return false;
+    if (!cfg->use_dhcp) {
+        if (!w5500_is_valid_ipv4_addr(cfg->ip)) return false;
+        if (!w5500_is_valid_netmask(cfg->sn)) return false;
+    }
+    if ((cfg->config_flags & W5500_CFG_FLAG_SERVER_CONFIGURED) != 0) {
+        if (!W5500_ServerConfig_IsValid(cfg)) return false;
+    }
+
+    return true;
+}
+
+
+int W5500_SaveConfig(const W5500_Network_Config_t *cfg){
+    if (cfg == NULL) return -1;
+    if (!W5500_Is_Config_ReadytoSave(cfg)) return -2;
+    if ((CONFIG_FLASH_OFFSET % FLASH_SECTOR_SIZE) != 0) return -3;
+
+    W5500_Network_Config_t local_cfg = *cfg;
+    local_cfg.magic = W5500_CONFIG_MAGIC;
+    local_cfg.crc = 0;
+    local_cfg.crc = w5500_crc32_compute( &local_cfg, offsetof(W5500_Network_Config_t, crc));
+
+    enum {
+        CONFIG_PROGRAM_SIZE = ((sizeof(W5500_Network_Config_t) + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE
+    };
+
+    uint8_t flash_buffer[CONFIG_PROGRAM_SIZE];
+    memset(flash_buffer, 0xFF, sizeof(flash_buffer));
+    memcpy(flash_buffer, &local_cfg, sizeof(local_cfg));
+
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(CONFIG_FLASH_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(CONFIG_FLASH_OFFSET, flash_buffer, sizeof(flash_buffer));
+    restore_interrupts(ints);
+
+    return 0;
+}
+
 
 W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg){
     if(cfg == NULL) return W5500_CONFIG_RESULT_ERROR;
