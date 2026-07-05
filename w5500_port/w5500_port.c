@@ -777,3 +777,97 @@ int app_ensure_server_ready(void) {
 }
 
 // app functions end
+
+
+int W5500_HTTP_POST(const char *endpoint, const char *payload) {
+    uint8_t sn = SOCK_HTTP;
+    char request[512];
+    uint8_t rx_buf[128 + 1];
+
+    if (payload == NULL) return -10;
+    if (!W5500_ServerConfig_IsValid(&g_conn)) return -11;
+
+    const char *path = endpoint;
+    if (path == NULL || path[0] == '\0') path = g_conn.http_path;
+
+    size_t payload_len = strlen(payload);
+    int req_len = snprintf(request, sizeof(request),
+        "POST %s HTTP/1.1\r\n"
+        "Host: %u.%u.%u.%u:%u\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %u\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        path,
+        g_conn.server_ip[0], g_conn.server_ip[1],
+        g_conn.server_ip[2], g_conn.server_ip[3],
+        g_conn.server_port,
+        (unsigned)payload_len,
+        payload
+    );
+
+    if (req_len < 0 || req_len >= (int)sizeof(request)) return -5;
+
+    close(sn);
+    if (socket(sn, Sn_MR_TCP, W5500_HTTP_LOCAL_PORT, 0) != sn) {
+        close(sn);
+        return -1;
+    }
+
+    if (connect(sn, g_conn.server_ip, g_conn.server_port) != SOCK_OK) {
+        close(sn);
+        return -2;
+    }
+
+    int sent_total = 0;
+    while (sent_total < req_len) {
+        int32_t sent = send(sn, (uint8_t *)&request[sent_total], req_len - sent_total);
+        if (sent <= 0) {
+            disconnect(sn);
+            close(sn);
+            return -3;
+        }
+
+        sent_total += sent;
+    }
+
+    absolute_time_t deadline = make_timeout_time_ms(W5500_HTTP_TIMEOUT_MS);
+    while (getSn_RX_RSR(sn) == 0) {
+        uint8_t status = getSn_SR(sn);
+        if (status == SOCK_CLOSED) {
+            close(sn);
+            return -4;
+        }
+
+        if (time_reached(deadline)) {
+            disconnect(sn);
+            close(sn);
+            return -4;
+        }
+
+        sleep_ms(1);
+    }
+
+    uint16_t available = getSn_RX_RSR(sn);
+    if (available > 128) available = 128;
+
+    int32_t received = recv(sn, rx_buf, available);
+    if (received <= 0) {
+        disconnect(sn);
+        close(sn);
+        return -6;
+    }
+
+    rx_buf[received] = '\0';
+    disconnect(sn);
+    close(sn);
+
+    if (strstr((char *)rx_buf, "HTTP/1.1 200") != NULL || strstr((char *)rx_buf, "HTTP/1.0 200") != NULL ||
+        strstr((char *)rx_buf, "HTTP/1.1 201") != NULL || strstr((char *)rx_buf, "HTTP/1.0 201") != NULL ||
+        strstr((char *)rx_buf, "HTTP/1.1 204") != NULL || strstr((char *)rx_buf, "HTTP/1.0 204") != NULL) {
+            return 0;
+    }
+
+    return -7;
+}
