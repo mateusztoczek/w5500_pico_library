@@ -46,6 +46,25 @@
 #define W5500_HTTP_TIMEOUT_MS 2000
 
 
+#define W5500_DEFAULT_SPI_PORT spi0
+#define W5500_DEFAULT_PIN_MISO 16
+#define W5500_DEFAULT_PIN_CS   17
+#define W5500_DEFAULT_PIN_SCK  18
+#define W5500_DEFAULT_PIN_MOSI 19
+#define W5500_DEFAULT_PIN_RST  20
+#define W5500_DEFAULT_PIN_INT  21
+
+static const W5500_Board_Config_t g_default_board_config = {
+    .spi_port = W5500_DEFAULT_SPI_PORT,
+    .miso_pin = W5500_DEFAULT_PIN_MISO,
+    .mosi_pin = W5500_DEFAULT_PIN_MOSI,
+    .sck_pin = W5500_DEFAULT_PIN_SCK,
+    .cs_pin = W5500_DEFAULT_PIN_CS,
+    .rst_pin = W5500_DEFAULT_PIN_RST,
+    .int_pin = W5500_DEFAULT_PIN_INT
+};
+
+
 static W5500_Board_Config_t g_board;
 static W5500_Network_Config_t g_conn;
 static wiz_NetInfo g_netinfo;
@@ -95,9 +114,15 @@ void w5500_reset(void){
 }
 
 
-int W5500_Board_Init(W5500_Board_Config_t *cfg){
-    if (cfg == NULL || cfg->spi_port == NULL) return -1;
+const W5500_Board_Config_t *W5500_Board_DefaultConfig(void) {
+    return &g_default_board_config;
+}
 
+
+int W5500_Board_Init(const W5500_Board_Config_t *cfg) {
+    if (cfg == NULL) cfg = W5500_Board_DefaultConfig();
+
+    if (cfg->spi_port == NULL) return -1;
     if (cfg->miso_pin > 29 || cfg->mosi_pin > 29 ||
         cfg->sck_pin > 29 || cfg->cs_pin > 29 ||
         cfg->rst_pin > 29 || cfg->int_pin > 29) {
@@ -726,6 +751,11 @@ static void W5500_PrintAppConfig(const W5500_Network_Config_t *cfg) {
 void W5500_PrintCurrentAppConfig(void){
     W5500_PrintAppConfig(&g_conn);
 }
+
+
+
+
+
 
 static void heartbeat_toggle(void) {
     gpio_xor_mask(1u << PIN_HEARTBEAT);

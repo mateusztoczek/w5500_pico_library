@@ -56,7 +56,9 @@ typedef struct {
 } W5500_Network_Config_t;
 
 
-int W5500_Board_Init(W5500_Board_Config_t *cfg);
+int W5500_Board_Init(const W5500_Board_Config_t *cfg);
+const W5500_Board_Config_t *W5500_Board_DefaultConfig(void);
+
 int W5500_Network_Init(const W5500_Network_Config_t *cfg);
 void W5500_PrintConfig(void);
 int W5500_Connect(void);
