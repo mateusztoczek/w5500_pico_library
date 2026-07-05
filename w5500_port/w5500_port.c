@@ -36,25 +36,22 @@
 #define W5500_MAX_INTERVAL_S 500
 
 #define W5500_LINK_TIMEOUT_MS 5000
-#define W5500_LINK_POLL_MS 100
+#define W5500_LINK_POLL_MS 50
 
 #define DISCOVERY_MAX_ATTEMPTS 5
 #define DISCOVERY_RESPONSE_TIMEOUT_MS 2000
 #define DISCOVERY_POLL_MS 10
 
+#define W5500_HTTP_LOCAL_PORT 50000
+#define W5500_HTTP_TIMEOUT_MS 2000
 
-typedef enum {
-    W5500_CONFIG_RESULT_ERROR = -1,
-    W5500_CONFIG_RESULT_LOADED = 1,
-    W5500_CONFIG_RESULT_DEFAULT_CREATED = 2
-} W5500_Config_Result_t;
 
 static W5500_Board_Config_t g_board;
 static W5500_Network_Config_t g_conn;
 static wiz_NetInfo g_netinfo;
 
 static bool g_board_initialized = false;
-static bool g_conn_initialized = true;
+static bool g_conn_initialized = false;
 
 static volatile bool g_dhcp_ip_found = false;
 static uint8_t g_dhcp_buffer[1024];
@@ -358,11 +355,37 @@ static int W5500_DHCP_Connect(uint32_t timeout_ms){
 }
 
 
+static int W5500_Ethernet_Link(uint32_t timeout_ms) {
+    uint8_t link = PHY_LINK_OFF;
+    uint32_t time_ms = 0;
+
+    while (time_ms < timeout_ms) {
+        gpio_xor_mask(1u << PIN_HEARTBEAT);
+
+        if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) {
+            return -1;
+        }
+
+        if (link == PHY_LINK_ON) {
+            return 0;
+        }
+
+        sleep_ms(W5500_LINK_POLL_MS);
+        time_ms += W5500_LINK_POLL_MS;
+    }
+
+    return -2;
+}
+
+/*
 static int W5500_Ethernet_Link(uint32_t timeout_ms){
     uint8_t link = PHY_LINK_OFF;
     uint32_t time_ms = 0;
 
     while (time_ms < timeout_ms) {
+        if ((time_ms % 100) == 0) {
+            printf("link=%u time=%lu\r\n", link, (unsigned long)time_ms);
+        }
         if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -1;
         if (link == PHY_LINK_ON) return 0;
         sleep_ms(W5500_LINK_POLL_MS);
@@ -372,14 +395,15 @@ static int W5500_Ethernet_Link(uint32_t timeout_ms){
     return -2;
 }
 
+*/
+
+
 
 int W5500_Connect(void){
     if (!g_board_initialized) return -1;
     if (!g_conn_initialized) return -2;
-
     int link_ret = W5500_Ethernet_Link(W5500_LINK_TIMEOUT_MS);
     if (link_ret != 0) return -3;
-
     if (g_conn.use_dhcp) return W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS);
     if (ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo) == -1) return -4;
 
@@ -649,7 +673,7 @@ int W5500_EnsureServerConfig(void){
     int response = W5500_UDP_Discovery(&g_conn);
     if (response != 0) {
         printf("UDP discovery failed: %d\r\n", response);
-        stdio_flush();
+        stdio_flush(); 
         return -1;
     }
     
@@ -671,8 +695,85 @@ int W5500_EnsureServerConfig(void){
 
 
 
-/////////////////////////////////////////////////
-// TODO
+static void W5500_PrintAppConfig(const W5500_Network_Config_t *cfg) {
+    if (cfg == NULL) return;
 
-//int W5500_HTTP_POST(const char *endpoint, const char *payload);
+    printf("--- APP CONFIG ---\r\n");
+    printf("magic: 0x%08lX\r\n", (unsigned long)cfg->magic);
+    printf("device_id: %s\r\n", cfg->device_id);
+    printf("mac: %02X:%02X:%02X:%02X:%02X:%02X\r\n",
+           cfg->mac[0], cfg->mac[1], cfg->mac[2],
+           cfg->mac[3], cfg->mac[4], cfg->mac[5]);
 
+    printf("use_dhcp: %d\r\n", cfg->use_dhcp);
+    printf("ip: %u.%u.%u.%u\r\n", cfg->ip[0], cfg->ip[1], cfg->ip[2], cfg->ip[3]);
+    printf("sn: %u.%u.%u.%u\r\n", cfg->sn[0], cfg->sn[1], cfg->sn[2], cfg->sn[3]);
+    printf("gw: %u.%u.%u.%u\r\n", cfg->gw[0], cfg->gw[1], cfg->gw[2], cfg->gw[3]);
+    printf("dns: %u.%u.%u.%u\r\n", cfg->dns[0], cfg->dns[1], cfg->dns[2], cfg->dns[3]);
+    printf("config_flags: 0x%08lX\r\n", (unsigned long)cfg->config_flags);
+    printf("server_ip: %u.%u.%u.%u\r\n",
+           cfg->server_ip[0], cfg->server_ip[1],
+           cfg->server_ip[2], cfg->server_ip[3]);
+    printf("server_port: %u\r\n", cfg->server_port);
+    printf("http_path: %s\r\n", cfg->http_path);
+    printf("interval_s: %lu\r\n", (unsigned long)cfg->interval_s);
+    printf("crc: 0x%08lX\r\n", (unsigned long)cfg->crc);
+}
+
+
+//app functions begin
+
+void W5500_PrintCurrentAppConfig(void){
+    W5500_PrintAppConfig(&g_conn);
+}
+
+static void heartbeat_toggle(void) {
+    gpio_xor_mask(1u << PIN_HEARTBEAT);
+}
+
+void heartbeat_delay(uint32_t total_ms, uint32_t step_ms) {
+    uint32_t elapsed = 0;
+
+    while (elapsed < total_ms) {
+        heartbeat_toggle();
+        sleep_ms(step_ms);
+        elapsed += step_ms;
+    }
+}
+
+void blink_code(uint8_t code) {
+    for (uint8_t i = 0; i < code; i++) {
+        gpio_put(PIN_HEARTBEAT, 1);
+        sleep_ms(150);
+        gpio_put(PIN_HEARTBEAT, 0);
+        sleep_ms(150);
+    }
+
+    sleep_ms(800);
+}
+
+
+
+
+int app_ensure_network_ready(void) {
+    int ret;
+    while (true) {
+        ret = W5500_Connect();
+        printf("W5500_Connect = %d\r\n", ret);
+        if (ret == 0) return 0;
+
+        blink_code(ERROR_CONNECT);
+        heartbeat_delay(1000, 100);
+    }
+}
+
+
+int app_ensure_server_ready(void) {
+    int ret = W5500_EnsureServerConfig();
+    printf("W5500_EnsureServerConfig = %d\r\n", ret);
+    stdio_flush();
+
+    return ret;
+}
+
+// app functions end

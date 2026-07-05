@@ -7,6 +7,21 @@
 
 #define W5500_CONFIG_MAGIC 0x57434631u
 
+#define PIN_HEARTBEAT 25
+
+#define ERROR_BOARD_INIT 1
+#define ERROR_NETWORK_INIT 2
+#define ERROR_CONNECT 3
+#define ERROR_SERVER_CONFIG 4
+#define ERROR_HTTP_POST 5
+
+
+typedef enum {
+    W5500_CONFIG_RESULT_ERROR = -1,
+    W5500_CONFIG_RESULT_LOADED = 1,
+    W5500_CONFIG_RESULT_DEFAULT_CREATED = 2
+} W5500_Config_Result_t;
+
 typedef struct {
     spi_inst_t *spi_port;
     uint miso_pin;
@@ -48,5 +63,12 @@ int W5500_Connect(void);
 //int W5500_EnsureServerConfig(void)
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
 int W5500_HTTP_POST(const char* endpoint, const char* payload);
+void W5500_PrintCurrentAppConfig(void);
+W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg);
+int W5500_EnsureServerConfig(void);
+int app_ensure_server_ready(void);
+int app_ensure_network_ready(void);
+void blink_code(uint8_t code);
+void heartbeat_delay(uint32_t total_ms, uint32_t step_ms);
 
 
