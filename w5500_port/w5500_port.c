@@ -753,38 +753,6 @@ void W5500_PrintCurrentAppConfig(void){
 }
 
 
-
-
-
-
-static void heartbeat_toggle(void) {
-    gpio_xor_mask(1u << PIN_HEARTBEAT);
-}
-
-void heartbeat_delay(uint32_t total_ms, uint32_t step_ms) {
-    uint32_t elapsed = 0;
-
-    while (elapsed < total_ms) {
-        heartbeat_toggle();
-        sleep_ms(step_ms);
-        elapsed += step_ms;
-    }
-}
-
-void blink_code(uint8_t code) {
-    for (uint8_t i = 0; i < code; i++) {
-        gpio_put(PIN_HEARTBEAT, 1);
-        sleep_ms(150);
-        gpio_put(PIN_HEARTBEAT, 0);
-        sleep_ms(150);
-    }
-
-    sleep_ms(800);
-}
-
-
-
-
 int app_ensure_network_ready(void) {
     int ret;
     while (true) {
@@ -792,8 +760,8 @@ int app_ensure_network_ready(void) {
         printf("W5500_Connect = %d\r\n", ret);
         if (ret == 0) return 0;
 
-        blink_code(ERROR_CONNECT);
-        heartbeat_delay(1000, 100);
+        Heartbeat_BlinkCode(ERROR_CONNECT);
+        Heartbeat_Delay(1000,100);
     }
 }
 
