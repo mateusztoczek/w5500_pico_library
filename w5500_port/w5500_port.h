@@ -19,6 +19,21 @@ typedef enum {
     W5500_CONFIG_RESULT_DEFAULT_CREATED = 2
 } W5500_Config_Result_t;
 
+typedef enum {
+    W5500_HTTP_OK = 0,
+    W5500_HTTP_ERR_SOCKET_OPEN        = -1,
+    W5500_HTTP_ERR_CONNECT            = -2,
+    W5500_HTTP_ERR_SEND               = -3,
+    W5500_HTTP_ERR_REMOTE_CLOSED      = -4,
+    W5500_HTTP_ERR_REQUEST_TOO_LARGE  = -5,
+    W5500_HTTP_ERR_RECEIVE            = -6,
+    W5500_HTTP_ERR_STATUS_CODE        = -7,
+    W5500_HTTP_ERR_SOCKET_CLOSE       = -8,
+    W5500_HTTP_ERR_RESPONSE_TIMEOUT   = -9,
+    W5500_HTTP_ERR_NULL_PAYLOAD       = -10,
+    W5500_HTTP_ERR_INVALID_CONFIG     = -11
+} W5500_HTTP_Result_t;
+
 typedef struct {
     spi_inst_t *spi_port;
     uint miso_pin;
@@ -61,7 +76,7 @@ void W5500_PrintConfig(void);
 int W5500_Connect(void);
 //int W5500_EnsureServerConfig(void)
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
-int W5500_HTTP_POST(const char* endpoint, const char* payload);
+int W5500_SendMeasurement(float measurement);
 void W5500_PrintCurrentAppConfig(void);
 W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg);
 int W5500_EnsureServerConfig(void);

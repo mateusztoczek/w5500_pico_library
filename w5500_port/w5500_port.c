@@ -16,6 +16,7 @@
 #include "DHCP/dhcp.h"
 #include "DNS/dns.h"
 #include "pico/unique_id.h"
+#include "heartbeat.h"
 
 
 #define CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
@@ -42,9 +43,7 @@
 #define DISCOVERY_RESPONSE_TIMEOUT_MS 2000
 #define DISCOVERY_POLL_MS 10
 
-#define W5500_HTTP_LOCAL_PORT 50000
 #define W5500_HTTP_TIMEOUT_MS 2000
-
 
 #define W5500_DEFAULT_SPI_PORT spi0
 #define W5500_DEFAULT_PIN_MISO 16
@@ -75,6 +74,8 @@ static bool g_conn_initialized = false;
 static volatile bool g_dhcp_ip_found = false;
 static uint8_t g_dhcp_buffer[1024];
 static uint8_t g_udp_discover_buffer[1024];
+static uint16_t g_http_local_port = 50000;
+
 
 
 static void w5500_cs_select(void){
@@ -774,22 +775,44 @@ int app_ensure_server_ready(void) {
     return ret;
 }
 
-// app functions end
+
+static uint16_t W5500_HTTP_NextLocalPort(void){
+    if (g_http_local_port > 60000) g_http_local_port = 50000;
+    return g_http_local_port++;
+}
 
 
-int W5500_HTTP_POST(const char *endpoint, const char *payload) {
-    uint8_t sn = SOCK_HTTP;
+static int W5500_CloseSocket(uint8_t sn, uint32_t timeout_ms){
+    disconnect(sn);
+    close(sn);
+
+    absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+
+    while (getSn_SR(sn) != SOCK_CLOSED) {
+        if (time_reached(deadline)) return -1;
+        sleep_ms(1);
+    }
+
+    return 0;
+}
+
+
+static W5500_HTTP_Result_t W5500_HTTP_POST(const char *endpoint, const char *payload){
+    const uint8_t sn = SOCK_HTTP;
+
     char request[512];
     uint8_t rx_buf[128 + 1];
 
-    if (payload == NULL) return -10;
-    if (!W5500_ServerConfig_IsValid(&g_conn)) return -11;
+    if (payload == NULL) return W5500_HTTP_ERR_NULL_PAYLOAD;
+    if (!W5500_ServerConfig_IsValid(&g_conn)) return W5500_HTTP_ERR_INVALID_CONFIG;
 
     const char *path = endpoint;
     if (path == NULL || path[0] == '\0') path = g_conn.http_path;
 
-    size_t payload_len = strlen(payload);
-    int req_len = snprintf(request, sizeof(request),
+    const size_t payload_len = strlen(payload);
+    const int req_len = snprintf(
+        request,
+        sizeof(request),
         "POST %s HTTP/1.1\r\n"
         "Host: %u.%u.%u.%u:%u\r\n"
         "Content-Type: application/json\r\n"
@@ -798,74 +821,87 @@ int W5500_HTTP_POST(const char *endpoint, const char *payload) {
         "\r\n"
         "%s",
         path,
-        g_conn.server_ip[0], g_conn.server_ip[1],
-        g_conn.server_ip[2], g_conn.server_ip[3],
+        g_conn.server_ip[0],
+        g_conn.server_ip[1],
+        g_conn.server_ip[2],
+        g_conn.server_ip[3],
         g_conn.server_port,
         (unsigned)payload_len,
         payload
     );
 
-    if (req_len < 0 || req_len >= (int)sizeof(request)) return -5;
+    if (req_len < 0 || req_len >= (int)sizeof(request)) return W5500_HTTP_ERR_REQUEST_TOO_LARGE;
+    if (W5500_CloseSocket(sn, 100) != 0) return W5500_HTTP_ERR_SOCKET_CLOSE;
 
-    close(sn);
-    if (socket(sn, Sn_MR_TCP, W5500_HTTP_LOCAL_PORT, 0) != sn) {
+    const uint16_t local_port = W5500_HTTP_NextLocalPort();
+    const int8_t socket_ret = socket(sn, Sn_MR_TCP, local_port, 0);
+    if (socket_ret != sn) {
         close(sn);
-        return -1;
+        return W5500_HTTP_ERR_SOCKET_OPEN;
     }
 
-    if (connect(sn, g_conn.server_ip, g_conn.server_port) != SOCK_OK) {
+    const int8_t connect_ret = connect(sn, g_conn.server_ip, g_conn.server_port);
+    printf("HTTP connect: ret=%d status=0x%02X ir=0x%02X port=%u\r\n", connect_ret, getSn_SR(sn), getSn_IR(sn), local_port);
+    stdio_flush();
+
+    if (connect_ret != SOCK_OK) {
         close(sn);
-        return -2;
+        return W5500_HTTP_ERR_CONNECT;
     }
 
     int sent_total = 0;
     while (sent_total < req_len) {
-        int32_t sent = send(sn, (uint8_t *)&request[sent_total], req_len - sent_total);
+        const int32_t sent = send(sn, (uint8_t *)&request[sent_total], req_len - sent_total);
         if (sent <= 0) {
-            disconnect(sn);
             close(sn);
-            return -3;
+            return W5500_HTTP_ERR_SEND;
         }
-
         sent_total += sent;
     }
 
-    absolute_time_t deadline = make_timeout_time_ms(W5500_HTTP_TIMEOUT_MS);
+    const absolute_time_t deadline = make_timeout_time_ms(W5500_HTTP_TIMEOUT_MS);
+
     while (getSn_RX_RSR(sn) == 0) {
-        uint8_t status = getSn_SR(sn);
+        const uint8_t status = getSn_SR(sn);
+
         if (status == SOCK_CLOSED) {
             close(sn);
-            return -4;
+            return W5500_HTTP_ERR_REMOTE_CLOSED;
         }
 
         if (time_reached(deadline)) {
-            disconnect(sn);
             close(sn);
-            return -4;
+            return W5500_HTTP_ERR_RESPONSE_TIMEOUT;
         }
 
         sleep_ms(1);
     }
 
     uint16_t available = getSn_RX_RSR(sn);
-    if (available > 128) available = 128;
+    if (available > sizeof(rx_buf) - 1) available = sizeof(rx_buf) - 1;
 
-    int32_t received = recv(sn, rx_buf, available);
+    const int32_t received = recv(sn, rx_buf, available);
     if (received <= 0) {
-        disconnect(sn);
         close(sn);
-        return -6;
+        return W5500_HTTP_ERR_RECEIVE;
     }
 
     rx_buf[received] = '\0';
-    disconnect(sn);
     close(sn);
 
     if (strstr((char *)rx_buf, "HTTP/1.1 200") != NULL || strstr((char *)rx_buf, "HTTP/1.0 200") != NULL ||
         strstr((char *)rx_buf, "HTTP/1.1 201") != NULL || strstr((char *)rx_buf, "HTTP/1.0 201") != NULL ||
-        strstr((char *)rx_buf, "HTTP/1.1 204") != NULL || strstr((char *)rx_buf, "HTTP/1.0 204") != NULL) {
-            return 0;
-    }
+        strstr((char *)rx_buf, "HTTP/1.1 204") != NULL || strstr((char *)rx_buf, "HTTP/1.0 204") != NULL
+    ) return W5500_HTTP_OK;
 
-    return -7;
+    return W5500_HTTP_ERR_STATUS_CODE;
+}
+
+
+int W5500_SendMeasurement(float measurement){
+    char payload[64];
+    int payload_len = snprintf(payload, sizeof(payload), "{\"measurement\":%.2f}", measurement);
+    if (payload_len < 0 || payload_len >= (int)sizeof(payload)) return W5500_HTTP_ERR_REQUEST_TOO_LARGE;
+
+    return W5500_HTTP_POST("/measurement", payload);
 }
