@@ -121,19 +121,18 @@ const W5500_Board_Config_t *W5500_Board_DefaultConfig(void) {
 
 
 int W5500_Board_Init(const W5500_Board_Config_t *cfg) {
+    g_board_initialized = false;
     if (cfg == NULL) cfg = W5500_Board_DefaultConfig();
 
     if (cfg->spi_port == NULL) return -1;
     if (cfg->miso_pin > 29 || cfg->mosi_pin > 29 ||
         cfg->sck_pin > 29 || cfg->cs_pin > 29 ||
         cfg->rst_pin > 29 || cfg->int_pin > 29) {
-            return -3;
+            return -2;
     }
 
     g_board = *cfg;
-
     spi_init(g_board.spi_port, 10 * 1000 * 1000);
-
     gpio_set_function(g_board.miso_pin, GPIO_FUNC_SPI);
     gpio_set_function(g_board.mosi_pin, GPIO_FUNC_SPI);
     gpio_set_function(g_board.sck_pin,  GPIO_FUNC_SPI);
@@ -149,7 +148,7 @@ int W5500_Board_Init(const W5500_Board_Config_t *cfg) {
     gpio_init(g_board.int_pin);
     gpio_set_dir(g_board.int_pin, GPIO_IN);
     gpio_pull_up(g_board.int_pin);
-        
+
     w5500_reset();
 
     reg_wizchip_cs_cbfunc(w5500_cs_select, w5500_cs_deselect);
@@ -157,10 +156,8 @@ int W5500_Board_Init(const W5500_Board_Config_t *cfg) {
     reg_wizchip_spiburst_cbfunc(w5500_spi_read_burst, w5500_spi_write_burst);
 
     uint8_t memsize[2][8] = {{2,2,2,2,2,2,2,2},{2,2,2,2,2,2,2,2}};
-    if (ctlwizchip(CW_INIT_WIZCHIP, (void*)memsize) == -1) return -1;
-
-    if (getVERSIONR() != 0x04) return -2;
-
+    if (ctlwizchip(CW_INIT_WIZCHIP, (void*)memsize) == -1) return -3;
+    if (getVERSIONR() != 0x04) return -4;
     g_board_initialized = true;
     return 0;
 }
@@ -287,23 +284,25 @@ static int W5500_Load_Flash_Config(W5500_Network_Config_t *cfg){
 }
 
 
-int W5500_Network_Init(const W5500_Network_Config_t *cfg){
+int W5500_Network_Init(const W5500_Network_Config_t *cfg) {
+    g_conn_initialized = false;
+
     if (cfg == NULL) return -1;
     if (!g_board_initialized) return -2;
-
     if (!w5500_is_valid_mac(cfg->mac)) return -3;
-
-    g_conn = *cfg;
-
-    memset(&g_netinfo, 0, sizeof(g_netinfo));
-
-    memcpy(g_netinfo.mac, cfg->mac, 6);
-    g_netinfo.dhcp = cfg->use_dhcp ? NETINFO_DHCP : NETINFO_STATIC;
 
     if (!cfg->use_dhcp) {
         if (!w5500_is_valid_ipv4_addr(cfg->ip)) return -4;
         if (!w5500_is_valid_netmask(cfg->sn)) return -5;
+    }
 
+    g_conn = *cfg;
+
+    memset(&g_netinfo, 0, sizeof(g_netinfo));
+    memcpy(g_netinfo.mac, cfg->mac, 6);
+    g_netinfo.dhcp = cfg->use_dhcp ? NETINFO_DHCP : NETINFO_STATIC;
+
+    if (!cfg->use_dhcp) {
         memcpy(g_netinfo.ip, cfg->ip, 4);
         memcpy(g_netinfo.sn, cfg->sn, 4);
         memcpy(g_netinfo.gw, cfg->gw, 4);
@@ -511,14 +510,14 @@ int W5500_SaveConfig(const W5500_Network_Config_t *cfg){
 }
 
 
-W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg){
-    if(cfg == NULL) return W5500_CONFIG_RESULT_ERROR;
+W5500_Config_Result_t  W5500_GetNetworkConfig(W5500_Network_Config_t *cfg){
+    if(cfg == NULL) return W5500_CONFIG_ERROR_NOT_PASSED;
     if(W5500_Load_Flash_Config(cfg) == 0){
         if(W5500_Is_Config_Valid(cfg)) return W5500_CONFIG_RESULT_LOADED;
     }
     W5500_Default_config(cfg);
     
-    return W5500_CONFIG_RESULT_DEFAULT_CREATED;
+    return W5500_CONFIG_DEFAULT_INITIALIZED;
 }
 
 
@@ -751,28 +750,6 @@ static void W5500_PrintAppConfig(const W5500_Network_Config_t *cfg) {
 
 void W5500_PrintCurrentAppConfig(void){
     W5500_PrintAppConfig(&g_conn);
-}
-
-
-int app_ensure_network_ready(void) {
-    int ret;
-    while (true) {
-        ret = W5500_Connect();
-        printf("W5500_Connect = %d\r\n", ret);
-        if (ret == 0) return 0;
-
-        Heartbeat_BlinkCode(ERROR_CONNECT);
-        Heartbeat_Delay(1000,100);
-    }
-}
-
-
-int app_ensure_server_ready(void) {
-    int ret = W5500_EnsureServerConfig();
-    printf("W5500_EnsureServerConfig = %d\r\n", ret);
-    stdio_flush();
-
-    return ret;
 }
 
 

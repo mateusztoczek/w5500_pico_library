@@ -7,16 +7,10 @@
 
 #define W5500_CONFIG_MAGIC 0x57434631u
 
-#define ERROR_BOARD_INIT 1
-#define ERROR_NETWORK_INIT 2
-#define ERROR_CONNECT 3
-#define ERROR_SERVER_CONFIG 4
-#define ERROR_HTTP_POST 5
-
 typedef enum {
-    W5500_CONFIG_RESULT_ERROR = -1,
+    W5500_CONFIG_ERROR_NOT_PASSED = -1,
     W5500_CONFIG_RESULT_LOADED = 1,
-    W5500_CONFIG_RESULT_DEFAULT_CREATED = 2
+    W5500_CONFIG_DEFAULT_INITIALIZED= 2
 } W5500_Config_Result_t;
 
 typedef enum {
@@ -80,5 +74,3 @@ int W5500_SendMeasurement(float measurement);
 void W5500_PrintCurrentAppConfig(void);
 W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg);
 int W5500_EnsureServerConfig(void);
-int app_ensure_server_ready(void);
-int app_ensure_network_ready(void);
