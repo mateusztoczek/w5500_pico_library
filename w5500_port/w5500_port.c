@@ -189,21 +189,6 @@ void W5500_Default_config(W5500_Network_Config_t *cfg){
 }
 
 
-void W5500_PrintConfig(void) {
-    wiz_NetInfo data;
-
-    ctlnetwork(CN_GET_NETINFO, &data);
-    printf("--- W5500 NETWORK SETTINGS ---\r\n");
-    printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\r\n", data.mac[0], data.mac[1], data.mac[2], data.mac[3], data.mac[4], data.mac[5]);
-    printf("IP: %d.%d.%d.%d\r\n", data.ip[0], data.ip[1], data.ip[2], data.ip[3]);
-    printf("SUBNET: %d.%d.%d.%d\r\n", data.sn[0], data.sn[1], data.sn[2], data.sn[3]);
-    printf("GATEWAY: %d.%d.%d.%d\r\n", data.gw[0], data.gw[1], data.gw[2], data.gw[3]);
-    printf("----------------------------\r\n");
-}
-
-/////////////////////////////////////////////////
-
-
 static bool w5500_is_valid_mac(const uint8_t mac[6]){
     bool all_zero = true;
     bool all_ff = true;
@@ -510,7 +495,7 @@ int W5500_SaveConfig(const W5500_Network_Config_t *cfg){
 }
 
 
-W5500_Config_Result_t  W5500_GetNetworkConfig(W5500_Network_Config_t *cfg){
+W5500_Config_Result_t  W5500_LoadOrInitNetworkConfig(W5500_Network_Config_t *cfg){
     if(cfg == NULL) return W5500_CONFIG_ERROR_NOT_PASSED;
     if(W5500_Load_Flash_Config(cfg) == 0){
         if(W5500_Is_Config_Valid(cfg)) return W5500_CONFIG_RESULT_LOADED;
@@ -518,6 +503,48 @@ W5500_Config_Result_t  W5500_GetNetworkConfig(W5500_Network_Config_t *cfg){
     W5500_Default_config(cfg);
     
     return W5500_CONFIG_DEFAULT_INITIALIZED;
+}
+
+
+int W5500_GetCurrentConfig(W5500_Network_Config_t *out_cfg) {
+    if (out_cfg == NULL) return -1;
+    if (!g_conn_initialized) return -2;
+
+    *out_cfg = g_conn;
+    return 0;
+}
+
+
+void W5500_PrintCurrentConfig(void) {
+    W5500_Network_Config_t cfg;
+
+    if (W5500_GetCurrentConfig(&cfg) != 0) {
+        printf("W5500 config not initialized\r\n");
+        return;
+    }
+
+    printf("device_id: %s\r\n", cfg.device_id);
+    printf("mac: %02X:%02X:%02X:%02X:%02X:%02X\r\n", cfg.mac[0], cfg.mac[1], cfg.mac[2], cfg.mac[3], cfg.mac[4], cfg.mac[5]);
+    printf("use_dhcp: %d\r\n", cfg.use_dhcp);
+    printf("server_ip: %u.%u.%u.%u\r\n", cfg.server_ip[0], cfg.server_ip[1], cfg.server_ip[2], cfg.server_ip[3]);
+    printf("server_port: %u\r\n", cfg.server_port);
+    printf("http_path: %s\r\n", cfg.http_path);
+    printf("interval_s: %lu\r\n", (unsigned long)cfg.interval_s);
+    printf("config_flags: 0x%08lX\r\n", (unsigned long)cfg.config_flags);
+}
+
+
+void W5500_PrintChipNetworkInfo(void) {
+    wiz_NetInfo info;
+    memset(&info, 0, sizeof(info));
+
+    ctlnetwork(CN_GET_NETINFO, &info);
+    printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\r\n", info.mac[0], info.mac[1], info.mac[2], info.mac[3], info.mac[4], info.mac[5]);
+    printf("IP: %u.%u.%u.%u\r\n", info.ip[0], info.ip[1], info.ip[2], info.ip[3]);
+    printf("SUBNET: %u.%u.%u.%u\r\n", info.sn[0], info.sn[1], info.sn[2], info.sn[3]);
+    printf("GATEWAY: %u.%u.%u.%u\r\n", info.gw[0], info.gw[1], info.gw[2], info.gw[3]);
+    printf("DNS: %u.%u.%u.%u\r\n", info.dns[0], info.dns[1], info.dns[2], info.dns[3]);
+    printf("DHCP mode: %s\r\n", info.dhcp == NETINFO_DHCP ? "DHCP" : "STATIC");
 }
 
 
@@ -692,7 +719,7 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
 }
 
 
-int W5500_EnsureServerConfig(void){
+int W5500_ResolveServerConfig(void){
     if (W5500_ServerConfig_IsValid(&g_conn)) return 0;
 
     int response = W5500_UDP_Discovery(&g_conn);
@@ -716,40 +743,6 @@ int W5500_EnsureServerConfig(void){
     }
 
     return 0;
-}
-
-
-
-static void W5500_PrintAppConfig(const W5500_Network_Config_t *cfg) {
-    if (cfg == NULL) return;
-
-    printf("--- APP CONFIG ---\r\n");
-    printf("magic: 0x%08lX\r\n", (unsigned long)cfg->magic);
-    printf("device_id: %s\r\n", cfg->device_id);
-    printf("mac: %02X:%02X:%02X:%02X:%02X:%02X\r\n",
-           cfg->mac[0], cfg->mac[1], cfg->mac[2],
-           cfg->mac[3], cfg->mac[4], cfg->mac[5]);
-
-    printf("use_dhcp: %d\r\n", cfg->use_dhcp);
-    printf("ip: %u.%u.%u.%u\r\n", cfg->ip[0], cfg->ip[1], cfg->ip[2], cfg->ip[3]);
-    printf("sn: %u.%u.%u.%u\r\n", cfg->sn[0], cfg->sn[1], cfg->sn[2], cfg->sn[3]);
-    printf("gw: %u.%u.%u.%u\r\n", cfg->gw[0], cfg->gw[1], cfg->gw[2], cfg->gw[3]);
-    printf("dns: %u.%u.%u.%u\r\n", cfg->dns[0], cfg->dns[1], cfg->dns[2], cfg->dns[3]);
-    printf("config_flags: 0x%08lX\r\n", (unsigned long)cfg->config_flags);
-    printf("server_ip: %u.%u.%u.%u\r\n",
-           cfg->server_ip[0], cfg->server_ip[1],
-           cfg->server_ip[2], cfg->server_ip[3]);
-    printf("server_port: %u\r\n", cfg->server_port);
-    printf("http_path: %s\r\n", cfg->http_path);
-    printf("interval_s: %lu\r\n", (unsigned long)cfg->interval_s);
-    printf("crc: 0x%08lX\r\n", (unsigned long)cfg->crc);
-}
-
-
-//app functions begin
-
-void W5500_PrintCurrentAppConfig(void){
-    W5500_PrintAppConfig(&g_conn);
 }
 
 
