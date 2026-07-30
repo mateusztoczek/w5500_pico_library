@@ -345,60 +345,6 @@ static int W5500_DHCP_Init(void) {
 }
 
 
-static int W5500_DHCP_Connect(uint32_t timeout_ms){
-
-    if(W5500_DHCP_Init() != 0){
-        return -1;
-    }
-
-    absolute_time_t start = get_absolute_time();
-    absolute_time_t last_tick = start;
-
-    int64_t timeout_us = (int64_t)timeout_ms * 1000;
-
-    while (absolute_time_diff_us(start, get_absolute_time()) < timeout_us) {
-        DHCP_run();
-        absolute_time_t now = get_absolute_time();
-
-        if (absolute_time_diff_us(last_tick, now) >= 1000000) {
-            DHCP_time_handler();
-            last_tick = now;
-        }
-
-        if (g_dhcp_ip_found) {
-            return 0;
-        }
-
-        sleep_ms(10);
-    }
-
-    return -2;
-}
-
-
-static int W5500_Ethernet_Link(uint32_t timeout_ms) {
-    uint8_t link = PHY_LINK_OFF;
-    uint32_t time_ms = 0;
-
-    while (time_ms < timeout_ms) {
-        gpio_xor_mask(1u << PIN_HEARTBEAT);
-
-        if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) {
-            return -1;
-        }
-
-        if (link == PHY_LINK_ON) {
-            return 0;
-        }
-
-        sleep_ms(W5500_LINK_POLL_MS);
-        time_ms += W5500_LINK_POLL_MS;
-    }
-
-    return -2;
-}
-
-
 int W5500_Network_Poll(void) {
     if (!g_board_initialized) return -1;
     if (!g_conn_initialized) return -2;
@@ -438,6 +384,47 @@ int W5500_Network_Poll(void) {
         default:
             return -9;
     }
+}
+
+
+static int W5500_DHCP_Connect(uint32_t timeout_ms) {
+    if (W5500_DHCP_Init() != 0) return -1;
+
+    absolute_time_t start = get_absolute_time();
+    const int64_t timeout_us = (int64_t)timeout_ms * 1000;
+
+    while (absolute_time_diff_us(start, get_absolute_time()) < timeout_us) {
+        absolute_time_t now_time = get_absolute_time();
+        if (absolute_time_diff_us(g_dhcp_last_tick, now_time) >= 1000000) {
+            DHCP_time_handler();
+            g_dhcp_last_tick = now_time;
+        }
+
+        uint8_t dhcp_state = DHCP_run();
+        if (g_dhcp_ip_found) return 0;
+        if (dhcp_state == DHCP_FAILED ||
+            dhcp_state == DHCP_STOPPED) {
+            return -2;
+        }
+        sleep_ms(10);
+    }
+    return -3;
+}
+
+
+static int W5500_Ethernet_Link(uint32_t timeout_ms) {
+    uint8_t link = PHY_LINK_OFF;
+    uint32_t time_ms = 0;
+
+    while (time_ms < timeout_ms) {
+        gpio_xor_mask(1u << PIN_HEARTBEAT);
+
+        if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -1;
+        if (link == PHY_LINK_ON) return 0;
+        sleep_ms(W5500_LINK_POLL_MS);
+        time_ms += W5500_LINK_POLL_MS;
+    }
+    return -2;
 }
 
 
@@ -775,6 +762,47 @@ int W5500_ResolveServerConfig(void){
     }
 
     return 0;
+}
+
+
+static int W5500_UpdateServerConfig(bool force_discovery) {
+    if (!g_conn_initialized) return -1;
+    if (!force_discovery &&
+        W5500_ServerConfig_IsValid(&g_conn)) {
+        return 0;
+    }
+
+    int ret = W5500_UDP_Discovery(&g_conn);
+    if (ret != 0) {
+        printf("UDP Discovery failed: %d\r\n", ret);
+        stdio_flush();
+        return -2;
+    }
+
+    if (!W5500_ServerConfig_IsValid(&g_conn)) {
+        printf("Invalid server config after UDP Discovery\r\n");
+        stdio_flush();
+        return -3;
+    }
+
+    ret = W5500_SaveConfig(&g_conn);
+    if (ret != 0) {
+        printf("Saving config failed: %d\r\n", ret);
+        stdio_flush();
+        return -4;
+    }
+
+    return 0;
+}
+
+
+int W5500_ResolveServerConfig(void) {
+    return W5500_UpdateServerConfig(false);
+}
+
+
+int W5500_RefreshServerConfig(void) {
+    return W5500_UpdateServerConfig(true);
 }
 
 
