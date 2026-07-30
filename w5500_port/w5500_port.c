@@ -398,26 +398,47 @@ static int W5500_Ethernet_Link(uint32_t timeout_ms) {
     return -2;
 }
 
-/*
-static int W5500_Ethernet_Link(uint32_t timeout_ms){
-    uint8_t link = PHY_LINK_OFF;
-    uint32_t time_ms = 0;
 
-    while (time_ms < timeout_ms) {
-        if ((time_ms % 100) == 0) {
-            printf("link=%u time=%lu\r\n", link, (unsigned long)time_ms);
-        }
-        if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -1;
-        if (link == PHY_LINK_ON) return 0;
-        sleep_ms(W5500_LINK_POLL_MS);
-        time_ms += W5500_LINK_POLL_MS;
+int W5500_Network_Poll(void) {
+    if (!g_board_initialized) return -1;
+    if (!g_conn_initialized) return -2;
+
+    uint8_t link = PHY_LINK_OFF;
+    if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -3;
+
+    if (link != PHY_LINK_ON) {
+        g_dhcp_ip_found = false;
+        return -4;
     }
 
-    return -2;
+    if (!g_conn.use_dhcp) return 0;
+    if (!g_dhcp_initialized) return -5;
+
+    absolute_time_t now = get_absolute_time();
+
+    if (absolute_time_diff_us(g_dhcp_last_tick, now) >= 1000000) {
+        DHCP_time_handler();
+        g_dhcp_last_tick = now;
+    }
+
+    uint8_t dhcp_state = DHCP_run();
+    switch (dhcp_state) {
+        case DHCP_IP_ASSIGN:
+        case DHCP_IP_CHANGED:
+        case DHCP_IP_LEASED:
+            return g_dhcp_ip_found ? 0 : -6;
+        case DHCP_RUNNING:
+            return g_dhcp_ip_found ? 0 : 1;
+        case DHCP_FAILED:
+            g_dhcp_ip_found = false;
+            return -7;
+        case DHCP_STOPPED:
+            g_dhcp_ip_found = false;
+            return -8;
+        default:
+            return -9;
+    }
 }
-
-*/
-
 
 
 int W5500_Connect(void){
