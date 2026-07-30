@@ -70,11 +70,14 @@ static wiz_NetInfo g_netinfo;
 
 static bool g_board_initialized = false;
 static bool g_conn_initialized = false;
+static bool g_dhcp_initialized = false;
 
 static volatile bool g_dhcp_ip_found = false;
+static absolute_time_t g_dhcp_last_tick;
 static uint8_t g_dhcp_buffer[1024];
 static uint8_t g_udp_discover_buffer[1024];
 static uint16_t g_http_local_port = 50000;
+
 
 
 
@@ -299,36 +302,44 @@ int W5500_Network_Init(const W5500_Network_Config_t *cfg) {
 }
 
 
-static void DHCP_IP_Assigned(void){
+static void W5500_DHCP_ApplyLease(void) {
     getIPfromDHCP(g_netinfo.ip);
     getGWfromDHCP(g_netinfo.gw);
     getSNfromDHCP(g_netinfo.sn);
     getDNSfromDHCP(g_netinfo.dns);
+
     g_netinfo.dhcp = NETINFO_DHCP;
 
-    ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo);
-    g_dhcp_ip_found = true;
+    if (ctlnetwork(CN_SET_NETINFO, (void *)&g_netinfo) == 0) g_dhcp_ip_found = true;
+    else g_dhcp_ip_found = false
 }
 
-static void DHCP_IP_Updated(void){
-    g_dhcp_ip_found = true;
-    //TODO
+
+static void DHCP_IP_Assigned(void) {
+    W5500_DHCP_ApplyLease();
 }
 
-static void DHCP_IP_Conflict(void){
+
+static void DHCP_IP_Updated(void) {
+    W5500_DHCP_ApplyLease();
+}
+
+
+static void DHCP_IP_Conflict(void) {
     g_dhcp_ip_found = false;
 }
 
 
-static int W5500_DHCP_Init(void){
-    if (g_netinfo.dhcp != NETINFO_DHCP) {
-        return 0;
-    }
+static int W5500_DHCP_Init(void) {
+    if (g_netinfo.dhcp != NETINFO_DHCP) return 0;
 
     g_dhcp_ip_found = false;
+    g_dhcp_initialized = false;
 
     DHCP_init(SOCK_DHCP, g_dhcp_buffer);
     reg_dhcp_cbfunc(DHCP_IP_Assigned, DHCP_IP_Updated, DHCP_IP_Conflict);
+    g_dhcp_last_tick = get_absolute_time();
+    g_dhcp_initialized = true;
 
     return 0;
 }
