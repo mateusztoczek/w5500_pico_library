@@ -1,6 +1,10 @@
+#include <inttypes.h>
 #include <stdio.h>
+#include "pico/time.h"
 #include "m_app.h"
 #include "heartbeat.h"
+
+static uint32_t g_request_id = 0;
 
 
 App_Init_Result_t App_Init(const W5500_Board_Config_t *board_cfg, W5500_Network_Config_t *network_cfg) {
@@ -79,4 +83,28 @@ int App_RefreshServerConfig(void){
     }
 
     return 0;
+}
+
+
+W5500_HTTP_Result_t App_SendMeasurement(float req_data){
+    W5500_Network_Config_t c;
+    if (W5500_GetCurrentConfig(&c) != 0) return W5500_HTTP_ERR_INVALID_CONFIG;
+    
+    const uint32_t request_id;
+    const uint64_t up_ms = to_ms_since_boot(get_absolute_time());
+
+    char payload[256];
+    const int len_payload = snprintf(payload, sizeof(payload),
+        "{"
+            "\"device_id\":\"%s\","
+            "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
+            "\"request_id\":%" PRIu32 ","
+            "\"uptime_ms\":%" PRIu64 ","
+            "\"measurement\":%.2f"
+        "}",
+        c.device_id, c.mac[0], c.mac[1], c.mac[2], c.mac[3], c.mac[4], c.mac[5], request_id, up_ms, req_data
+    );
+    if (len_payload < 0 || len_payload >= (int)sizeof(payload)) return W5500_HTTP_ERR_REQUEST_TOO_LARGE;
+
+    return W5500_HTTP_POST_JSON(NULL, payload);
 }

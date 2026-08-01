@@ -6,6 +6,7 @@
 #define HEARTBEAT_ERROR_CONNECT 3
 #define HEARTBEAT_ERROR_SERVER_CONFIG 4
 #define HEARTBEAT_ERROR_HTTP_POST 5
+#define HEARTBEAT_ERROR_UNKNOWN 6
 
 typedef enum {
     APP_INIT_OK = 0,
@@ -27,3 +28,4 @@ App_Init_Result_t App_Init(const W5500_Board_Config_t *board_cfg, W5500_Network_
 void App_EnsureCommunicationReady(void);
 App_Network_Result_t App_NetworkPoll(void);
 int App_RefreshServerConfig(void);
+W5500_HTTP_Result_t App_SendMeasurement(float req_data);

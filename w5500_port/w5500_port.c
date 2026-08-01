@@ -827,7 +827,7 @@ static int W5500_CloseSocket(uint8_t sn, uint32_t timeout_ms){
 }
 
 
-static W5500_HTTP_Result_t W5500_HTTP_POST(const char *endpoint, const char *payload){
+W5500_HTTP_Result_t W5500_HTTP_POST_JSON(const char *endpoint, const char *payload){
     const uint8_t sn = SOCK_HTTP;
 
     char request[512];
@@ -925,13 +925,4 @@ static W5500_HTTP_Result_t W5500_HTTP_POST(const char *endpoint, const char *pay
     ) return W5500_HTTP_OK;
 
     return W5500_HTTP_ERR_STATUS_CODE;
-}
-
-
-int W5500_SendMeasurement(float measurement){
-    char payload[64];
-    int payload_len = snprintf(payload, sizeof(payload), "{\"measurement\":%.2f}", measurement);
-    if (payload_len < 0 || payload_len >= (int)sizeof(payload)) return W5500_HTTP_ERR_REQUEST_TOO_LARGE;
-
-    return W5500_HTTP_POST("/measurement", payload);
 }
