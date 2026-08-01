@@ -17,7 +17,7 @@ App_Init_Result_t App_Init(const W5500_Board_Config_t *board_cfg, W5500_Network_
     }
 
     W5500_Config_Result_t cfg_result= W5500_LoadOrInitNetworkConfig(network_cfg);
-    if (cfg_result == W5500_CONFIG_RESULT_ERROR) {
+    if (cfg_result == W5500_CONFIG_RESULT_ERROR || cfg_result == W5500_CONFIG_RESULT_ERROR_NOT_PASSED) {
         return APP_INIT_ERR_CONFIG;
     }
 

@@ -311,7 +311,7 @@ static void W5500_DHCP_ApplyLease(void) {
     g_netinfo.dhcp = NETINFO_DHCP;
 
     if (ctlnetwork(CN_SET_NETINFO, (void *)&g_netinfo) == 0) g_dhcp_ip_found = true;
-    else g_dhcp_ip_found = false
+    else g_dhcp_ip_found = false;
 }
 
 
@@ -515,7 +515,7 @@ int W5500_SaveConfig(const W5500_Network_Config_t *cfg){
 
 
 W5500_Config_Result_t  W5500_LoadOrInitNetworkConfig(W5500_Network_Config_t *cfg){
-    if(cfg == NULL) return W5500_CONFIG_ERROR_NOT_PASSED;
+    if(cfg == NULL) return W5500_CONFIG_RESULT_ERROR_NOT_PASSED;
     if(W5500_Load_Flash_Config(cfg) == 0){
         if(W5500_Is_Config_Valid(cfg)) return W5500_CONFIG_RESULT_LOADED;
     }
@@ -735,33 +735,6 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
 
     close(SOCK_DISCOVERY);
     return -6;
-}
-
-
-int W5500_ResolveServerConfig(void){
-    if (W5500_ServerConfig_IsValid(&g_conn)) return 0;
-
-    int response = W5500_UDP_Discovery(&g_conn);
-    if (response != 0) {
-        printf("UDP discovery failed: %d\r\n", response);
-        stdio_flush(); 
-        return -1;
-    }
-    
-    if (!W5500_ServerConfig_IsValid(&g_conn)){
-        printf("UDP discovery returned OK, but server config is still invalid\r\n");
-        stdio_flush();
-        return -2;
-    }
-
-    response = W5500_SaveConfig(&g_conn);
-    if (response != 0) {
-        printf("W5500_SaveConfig failed: %d\r\n", response);
-        stdio_flush();
-        return -3;
-    }
-
-    return 0;
 }
 
 

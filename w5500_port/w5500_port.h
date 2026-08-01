@@ -8,7 +8,8 @@
 #define W5500_CONFIG_MAGIC 0x57434631u
 
 typedef enum {
-    W5500_CONFIG_ERROR_NOT_PASSED = -1,
+    W5500_CONFIG_RESULT_ERROR_NOT_PASSED = -1,
+    W5500_CONFIG_RESULT_ERROR = -2,
     W5500_CONFIG_RESULT_LOADED = 1,
     W5500_CONFIG_DEFAULT_INITIALIZED= 2
 } W5500_Config_Result_t;
@@ -62,6 +63,7 @@ const W5500_Board_Config_t *W5500_Board_DefaultConfig(void);
 int W5500_Network_Init(const W5500_Network_Config_t *cfg);
 W5500_Config_Result_t  W5500_LoadOrInitNetworkConfig(W5500_Network_Config_t *cfg);
 int W5500_GetCurrentConfig(W5500_Network_Config_t *out_cfg);
+void W5500_PrintCurrentConfig(void);
 void W5500_PrintChipNetworkInfo(void);
 int W5500_Connect(void);
 int W5500_UDP_Discovery(W5500_Network_Config_t *cfg);
