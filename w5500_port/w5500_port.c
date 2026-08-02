@@ -260,8 +260,6 @@ static bool w5500_is_valid_crc(const W5500_Network_Config_t *cfg){
 }
 
 
-// pobieranie config z flash
-// potem: sprawdzenie czy jest config i czy jest ok. jesli nie ma albo cos jest nie tak idz do default config
 static int W5500_Load_Flash_Config(W5500_Network_Config_t *cfg){
     if (cfg == NULL) return -1;
 
@@ -278,7 +276,6 @@ int W5500_Network_Init(const W5500_Network_Config_t *cfg) {
     if (cfg == NULL) return -1;
     if (!g_board_initialized) return -2;
     if (!w5500_is_valid_mac(cfg->mac)) return -3;
-
     if (!cfg->use_dhcp) {
         if (!w5500_is_valid_ipv4_addr(cfg->ip)) return -4;
         if (!w5500_is_valid_netmask(cfg->sn)) return -5;
@@ -302,40 +299,38 @@ int W5500_Network_Init(const W5500_Network_Config_t *cfg) {
 }
 
 
-static void W5500_DHCP_ApplyLease(void) {
+static void DHCP_IP_Assigned(void){
     getIPfromDHCP(g_netinfo.ip);
     getGWfromDHCP(g_netinfo.gw);
     getSNfromDHCP(g_netinfo.sn);
     getDNSfromDHCP(g_netinfo.dns);
 
     g_netinfo.dhcp = NETINFO_DHCP;
-
-    if (ctlnetwork(CN_SET_NETINFO, (void *)&g_netinfo) == 0) g_dhcp_ip_found = true;
-    else g_dhcp_ip_found = false;
+    const int8_t ret = ctlnetwork(CN_SET_NETINFO, (void *)&g_netinfo);
+    g_dhcp_ip_found = (ret == 0);
 }
 
 
-static void DHCP_IP_Assigned(void) {
-    W5500_DHCP_ApplyLease();
+static void DHCP_IP_Updated(void){
+    DHCP_IP_Assigned();
 }
 
 
-static void DHCP_IP_Updated(void) {
-    W5500_DHCP_ApplyLease();
-}
-
-
-static void DHCP_IP_Conflict(void) {
+static void DHCP_IP_Conflict(void){
     g_dhcp_ip_found = false;
 }
 
 
-static int W5500_DHCP_Init(void) {
-    if (g_netinfo.dhcp != NETINFO_DHCP) return 0;
+static int W5500_DHCP_Init(void){
+    if (g_netinfo.dhcp != NETINFO_DHCP) {
+        g_dhcp_initialized = false;
+        return 0;
+    }
 
-    g_dhcp_ip_found = false;
     g_dhcp_initialized = false;
+    g_dhcp_ip_found = false;
 
+    if (ctlnetwork(CN_SET_NETINFO, &g_netinfo) == -1) return -1;
     DHCP_init(SOCK_DHCP, g_dhcp_buffer);
     reg_dhcp_cbfunc(DHCP_IP_Assigned, DHCP_IP_Updated, DHCP_IP_Conflict);
     g_dhcp_last_tick = get_absolute_time();
@@ -387,43 +382,40 @@ int W5500_Network_Poll(void) {
 }
 
 
-static int W5500_DHCP_Connect(uint32_t timeout_ms) {
+static int W5500_DHCP_Connect(uint32_t timeout_ms){
     if (W5500_DHCP_Init() != 0) return -1;
 
-    absolute_time_t start = get_absolute_time();
-    const int64_t timeout_us = (int64_t)timeout_ms * 1000;
+    const absolute_time_t deadline= make_timeout_time_ms(timeout_ms);
+    while (!time_reached(deadline)) {
+        const absolute_time_t now = get_absolute_time();
 
-    while (absolute_time_diff_us(start, get_absolute_time()) < timeout_us) {
-        absolute_time_t now_time = get_absolute_time();
-        if (absolute_time_diff_us(g_dhcp_last_tick, now_time) >= 1000000) {
+        if (absolute_time_diff_us(g_dhcp_last_tick, now) >= 1000000) {
             DHCP_time_handler();
-            g_dhcp_last_tick = now_time;
+            g_dhcp_last_tick = now;
         }
-
-        uint8_t dhcp_state = DHCP_run();
+        const uint8_t dhcp_state = DHCP_run();
         if (g_dhcp_ip_found) return 0;
-        if (dhcp_state == DHCP_FAILED ||
-            dhcp_state == DHCP_STOPPED) {
-            return -2;
-        }
+        if (dhcp_state == DHCP_FAILED) return -2;
+        if (dhcp_state == DHCP_STOPPED) return -3;
         sleep_ms(10);
     }
-    return -3;
+
+    return -4;
 }
 
 
-static int W5500_Ethernet_Link(uint32_t timeout_ms) {
+static int W5500_Ethernet_Link(uint32_t timeout_ms){
     uint8_t link = PHY_LINK_OFF;
-    uint32_t time_ms = 0;
+    uint32_t elapsed_ms = 0;
 
-    while (time_ms < timeout_ms) {
-        gpio_xor_mask(1u << PIN_HEARTBEAT);
-
+    while (elapsed_ms < timeout_ms) {
         if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -1;
         if (link == PHY_LINK_ON) return 0;
+
         sleep_ms(W5500_LINK_POLL_MS);
-        time_ms += W5500_LINK_POLL_MS;
+        elapsed_ms += W5500_LINK_POLL_MS;
     }
+
     return -2;
 }
 
@@ -431,10 +423,13 @@ static int W5500_Ethernet_Link(uint32_t timeout_ms) {
 int W5500_Connect(void){
     if (!g_board_initialized) return -1;
     if (!g_conn_initialized) return -2;
-    int link_ret = W5500_Ethernet_Link(W5500_LINK_TIMEOUT_MS);
-    if (link_ret != 0) return -3;
-    if (g_conn.use_dhcp) return W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS);
-    if (ctlnetwork(CN_SET_NETINFO, (void*)&g_netinfo) == -1) return -4;
+    if (W5500_Ethernet_Link(W5500_LINK_TIMEOUT_MS) != 0) return -3;
+
+    if (g_conn.use_dhcp) {
+        if (W5500_DHCP_Connect(W5500_DHCP_DEFAULT_TIMEOUT_MS) != 0) return -4;
+        return 0;
+    }
+    if (ctlnetwork(CN_SET_NETINFO, &g_netinfo) == -1) return -5;
 
     return 0;
 }
