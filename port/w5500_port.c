@@ -45,6 +45,8 @@
 #define DISCOVERY_POLL_MS 10
 
 #define W5500_HTTP_TIMEOUT_MS 2000
+#define W5500_RTR_TIMEOUT 2000
+#define W5500_RCR_NUM_ATTEMPTS 8
 
 #define W5500_DEFAULT_SPI_PORT spi0
 #define W5500_DEFAULT_PIN_MISO 16
@@ -162,6 +164,8 @@ int W5500_Board_Init(const W5500_Board_Config_t *cfg) {
     uint8_t memsize[2][8] = {{2,2,2,2,2,2,2,2},{2,2,2,2,2,2,2,2}};
     if (ctlwizchip(CW_INIT_WIZCHIP, (void*)memsize) == -1) return -3;
     if (getVERSIONR() != 0x04) return -4;
+    setRTR(W5500_RTR_TIMEOUT);
+    setRCR(W5500_RCR_NUM_ATTEMPTS);
     g_board_initialized = true;
     return 0;
 }
@@ -400,6 +404,7 @@ static int W5500_DHCP_Connect(uint32_t timeout_ms){
 
     const absolute_time_t deadline= make_timeout_time_ms(timeout_ms);
     while (!time_reached(deadline)) {
+        watchdog_update();
         const absolute_time_t now = get_absolute_time();
 
         if (absolute_time_diff_us(g_dhcp_last_tick, now) >= 1000000) {
@@ -422,6 +427,7 @@ static int W5500_Ethernet_Link(uint32_t timeout_ms){
     uint32_t elapsed_ms = 0;
 
     while (elapsed_ms < timeout_ms) {
+        watchdog_update();
         if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -1;
         if (link == PHY_LINK_ON) return 0;
 
@@ -711,7 +717,7 @@ int W5500_UDP_Discovery(W5500_Network_Config_t *cfg){
 
         absolute_time_t start = get_absolute_time();
         while (absolute_time_diff_us(start, get_absolute_time()) < (int64_t)DISCOVERY_RESPONSE_TIMEOUT_MS * 1000) {
-
+            watchdog_update();
             uint16_t rx_size = getSn_RX_RSR(SOCK_DISCOVERY);
             if (rx_size > 0) {
                 if (rx_size >= sizeof(g_udp_discover_buffer)) rx_size = sizeof(g_udp_discover_buffer) - 1;

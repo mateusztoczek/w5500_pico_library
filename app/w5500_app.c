@@ -7,9 +7,6 @@
 
 #include "pico/unique_id.h"
 
-static uint32_t g_request_id = 0;
-
-
 
 static void App_New_Local_MAC(uint8_t mac[6]){
     pico_unique_board_id_t id;
@@ -67,9 +64,11 @@ int App_FactoryReset(void){
 
 static void App_EnsureNetworkReady(void){
     while (true) {
+        watchdog_update();
         const int ret = W5500_Connect();
         if (ret == 0) return;
         Heartbeat_BlinkCode(HEARTBEAT_ERROR_CONNECT);
+        watchdog_update();
         Heartbeat_Delay(1000, 100);
     }
 }
@@ -77,10 +76,12 @@ static void App_EnsureNetworkReady(void){
 
 static void App_EnsureServerConfigured(void){
     while (true) {
+        watchdog_update();
         const int ret = W5500_ResolveServerConfig();
         if (ret == 0) return;
 
         Heartbeat_BlinkCode(HEARTBEAT_ERROR_SERVER_CONFIG);
+        watchdog_update();
         Heartbeat_Delay(3000, 100);
     }
 }
