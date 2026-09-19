@@ -2,12 +2,12 @@
 #include <stdio.h>
 #include <string.h>
 #include "pico/time.h"
-#include "app.h"
+#include "app/w5500_app.h"
 #include "heartbeat.h"
 
 #include "pico/unique_id.h"
 
-static uint32_t g_request_id = 0;
+static uint32_t g_request_id = 0; 
 
 
 
@@ -46,18 +46,22 @@ App_Init_Result_t App_Init(const W5500_Board_Config_t *board_cfg, W5500_Network_
         return APP_INIT_ERR_BOARD;
     }
 
-    /*
     W5500_Config_Result_t cfg_result= W5500_LoadOrInitNetworkConfig(network_cfg);
     if (cfg_result == W5500_CONFIG_RESULT_ERROR || cfg_result == W5500_CONFIG_RESULT_ERROR_NOT_PASSED) {
         return APP_INIT_ERR_CONFIG;
     }
-    */
-    App_Default_config(network_cfg);
+    
+    //App_Default_config(network_cfg);
 
     ret = W5500_Network_Init(network_cfg);
     if (ret != 0) return APP_INIT_ERR_NETWORK;
 
     return APP_INIT_OK;
+}
+
+
+int App_FactoryReset(void){
+    return W5500_FactoryReset_Flash_Config();
 }
 
 
@@ -93,6 +97,9 @@ App_Network_Result_t App_NetworkPoll(void){
     if (ret == 0) return APP_NETWORK_OK;
     if (ret > 0) return APP_NETWORK_BUSY;
     switch (ret) {
+        case -1:
+        case -2:
+        return APP_NETWORK_ERR_INTERNAL;
         case -3:
         case -4:
             return APP_NETWORK_ERR_LINK;
@@ -122,7 +129,6 @@ W5500_HTTP_Result_t App_SendMeasurement(float req_data){
     W5500_Network_Config_t c;
     if (W5500_GetCurrentConfig(&c) != 0) return W5500_HTTP_ERR_INVALID_CONFIG;
     
-    const uint32_t request_id;
     const uint64_t up_ms = to_ms_since_boot(get_absolute_time());
 
     char payload[256];
@@ -130,11 +136,10 @@ W5500_HTTP_Result_t App_SendMeasurement(float req_data){
         "{"
             "\"device_id\":\"%s\","
             "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
-            "\"request_id\":%" PRIu32 ","
             "\"uptime_ms\":%" PRIu64 ","
             "\"measurement\":%.2f"
         "}",
-        c.device_id, c.mac[0], c.mac[1], c.mac[2], c.mac[3], c.mac[4], c.mac[5], request_id, up_ms, req_data
+        c.device_id, c.mac[0], c.mac[1], c.mac[2], c.mac[3], c.mac[4], c.mac[5], up_ms, req_data
     );
     if (len_payload < 0 || len_payload >= (int)sizeof(payload)) return W5500_HTTP_ERR_REQUEST_TOO_LARGE;
 
