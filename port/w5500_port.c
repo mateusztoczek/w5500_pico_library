@@ -81,7 +81,11 @@ static uint8_t g_dhcp_buffer[1024];
 static uint8_t g_udp_discover_buffer[1024];
 static uint16_t g_http_local_port = 50000;
 
-
+typedef struct {
+    uint32_t offset;
+    const uint8_t *data;
+    size_t len;
+} Flash_Config_t;
 
 
 static void w5500_cs_select(void){
@@ -501,28 +505,42 @@ static bool W5500_Is_Config_ReadytoSave(const W5500_Network_Config_t *cfg){
 }
 
 
+static void Write_Flash_Config(void *param){
+    Flash_Config_t *p= (Flash_Config_t *)param;
+
+    flash_range_erase(p->offset, FLASH_SECTOR_SIZE);
+    flash_range_program(p->offset, p->data, p->len);
+}
+
+
 int W5500_SaveConfig(const W5500_Network_Config_t *cfg){
     if (cfg == NULL) return -1;
     if (!W5500_Is_Config_ReadytoSave(cfg)) return -2;
     if ((CONFIG_FLASH_OFFSET % FLASH_SECTOR_SIZE) != 0) return -3;
 
     W5500_Network_Config_t local_cfg = *cfg;
+
     local_cfg.magic = W5500_CONFIG_MAGIC;
     local_cfg.crc = 0;
-    local_cfg.crc = w5500_crc32_compute( &local_cfg, offsetof(W5500_Network_Config_t, crc));
+    local_cfg.crc = w5500_crc32_compute(&local_cfg, offsetof(W5500_Network_Config_t, crc));
 
     enum {
-        CONFIG_PROGRAM_SIZE = ((sizeof(W5500_Network_Config_t) + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE
+        CONFIG_PROGRAM_SIZE =((sizeof(W5500_Network_Config_t) + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE)* FLASH_PAGE_SIZE
     };
 
     uint8_t flash_buffer[CONFIG_PROGRAM_SIZE];
+
     memset(flash_buffer, 0xFF, sizeof(flash_buffer));
     memcpy(flash_buffer, &local_cfg, sizeof(local_cfg));
 
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(CONFIG_FLASH_OFFSET, FLASH_SECTOR_SIZE);
-    flash_range_program(CONFIG_FLASH_OFFSET, flash_buffer, sizeof(flash_buffer));
-    restore_interrupts(ints);
+    Flash_Config_t params = {
+        .offset= CONFIG_FLASH_OFFSET,
+        .data= flash_buffer,
+        .len= sizeof(flash_buffer)
+    };
+
+    int rc = flash_safe_execute(Write_Flash_Config, &params, W5500_FLASH_OPERATION_TIMEOUT_MS);
+    if (rc != PICO_OK) return -4;
 
     return 0;
 }
