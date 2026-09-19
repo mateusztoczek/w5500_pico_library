@@ -1,4 +1,3 @@
-
 #include "port/w5500_port.h"
  
 #include <stdio.h>
@@ -10,6 +9,7 @@
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
 #include "hardware/sync.h"
+#include "pico/flash.h"
 #include "hardware/flash.h"
 #include "wizchip_conf.h"
 #include "socket.h"
@@ -20,7 +20,7 @@
 
 
 #define CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define W5500_FLASH_ERASE_TIMEOUT 1000
+#define W5500_FLASH_OPERATION_TIMEOUT_MS 1000
 #define DISCOVERY_LOCAL_PORT 50000
 #define DISCOVERY_SERVER_PORT 40001
 
@@ -286,7 +286,7 @@ static void Erase_Flash_Sector(void *sector){
 
 
 int W5500_FactoryReset_Flash_Config(void){
-    int rc = flash_safe_execute(Erase_Flash_Sector, (void *)(uintptr_t)CONFIG_FLASH_OFFSET, W5500_FLASH_ERASE_TIMEOUT);
+    int rc = flash_safe_execute(Erase_Flash_Sector, (void *)(uintptr_t)CONFIG_FLASH_OFFSET, W5500_FLASH_OPERATION_TIMEOUT_MS);
     return rc;
 }
 
@@ -466,7 +466,6 @@ static bool W5500_ServerConfig_IsValid(const W5500_Network_Config_t *cfg){
     if (cfg->http_path[0] == '\0') return false;
 
     return true;
-
 }
 
 

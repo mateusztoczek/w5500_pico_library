@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "hardware/spi.h"
 #include "pico/types.h"
+#include "hardware/watchdog.h"
 
 #define W5500_CONFIG_MAGIC 0x57434631u
 
