@@ -20,6 +20,7 @@
 
 
 #define CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define W5500_FLASH_ERASE_TIMEOUT 1000
 #define DISCOVERY_LOCAL_PORT 50000
 #define DISCOVERY_SERVER_PORT 40001
 
@@ -72,7 +73,7 @@ static bool g_board_initialized = false;
 static bool g_conn_initialized = false;
 static bool g_dhcp_initialized = false;
 
-static volatile bool g_dhcp_ip_found = false;
+static volatile bool g_dhcp_config_applied = false;
 static absolute_time_t g_dhcp_last_tick;
 static uint8_t g_dhcp_buffer[1024];
 static uint8_t g_udp_discover_buffer[1024];
@@ -270,6 +271,18 @@ static int W5500_Load_Flash_Config(W5500_Network_Config_t *cfg){
 }
 
 
+static void Erase_Flash_Sector(void *sector){
+    uint32_t offset = (uint32_t)(uintptr_t) sector;
+    flash_range_erase(offset, FLASH_SECTOR_SIZE);
+}
+
+
+int W5500_FactoryReset_Flash_Config(void){
+    int rc = flash_safe_execute(Erase_Flash_Sector, (void *)(uintptr_t)CONFIG_FLASH_OFFSET, W5500_FLASH_ERASE_TIMEOUT);
+    return rc;
+}
+
+
 int W5500_Network_Init(const W5500_Network_Config_t *cfg) {
     g_conn_initialized = false;
 
@@ -307,7 +320,7 @@ static void DHCP_IP_Assigned(void){
 
     g_netinfo.dhcp = NETINFO_DHCP;
     const int8_t ret = ctlnetwork(CN_SET_NETINFO, (void *)&g_netinfo);
-    g_dhcp_ip_found = (ret == 0);
+    g_dhcp_config_applied = (ret == 0);
 }
 
 
@@ -317,7 +330,7 @@ static void DHCP_IP_Updated(void){
 
 
 static void DHCP_IP_Conflict(void){
-    g_dhcp_ip_found = false;
+    g_dhcp_config_applied = false;
 }
 
 
@@ -328,7 +341,7 @@ static int W5500_DHCP_Init(void){
     }
 
     g_dhcp_initialized = false;
-    g_dhcp_ip_found = false;
+    g_dhcp_config_applied = false;
 
     if (ctlnetwork(CN_SET_NETINFO, &g_netinfo) == -1) return -1;
     DHCP_init(SOCK_DHCP, g_dhcp_buffer);
@@ -348,7 +361,7 @@ int W5500_Network_Poll(void) {
     if (ctlwizchip(CW_GET_PHYLINK, &link) == -1) return -3;
 
     if (link != PHY_LINK_ON) {
-        g_dhcp_ip_found = false;
+        //g_dhcp_config_applied = false;
         return -4;
     }
 
@@ -367,14 +380,14 @@ int W5500_Network_Poll(void) {
         case DHCP_IP_ASSIGN:
         case DHCP_IP_CHANGED:
         case DHCP_IP_LEASED:
-            return g_dhcp_ip_found ? 0 : -6;
+            return g_dhcp_config_applied ? 0 : -6;
         case DHCP_RUNNING:
-            return g_dhcp_ip_found ? 0 : 1;
+            return g_dhcp_config_applied ? 0 : 1;
         case DHCP_FAILED:
-            g_dhcp_ip_found = false;
+            g_dhcp_config_applied = false;
             return -7;
         case DHCP_STOPPED:
-            g_dhcp_ip_found = false;
+            g_dhcp_config_applied = false;
             return -8;
         default:
             return -9;
@@ -394,7 +407,7 @@ static int W5500_DHCP_Connect(uint32_t timeout_ms){
             g_dhcp_last_tick = now;
         }
         const uint8_t dhcp_state = DHCP_run();
-        if (g_dhcp_ip_found) return 0;
+        if (g_dhcp_config_applied) return 0;
         if (dhcp_state == DHCP_FAILED) return -2;
         if (dhcp_state == DHCP_STOPPED) return -3;
         sleep_ms(10);

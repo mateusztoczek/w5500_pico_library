@@ -7,7 +7,7 @@
 
 #include "pico/unique_id.h"
 
-static uint32_t g_request_id = 0; 
+static uint32_t g_request_id = 0;
 
 
 

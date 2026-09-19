@@ -26,6 +26,7 @@ typedef enum {
 } App_Network_Result_t;
 
 App_Init_Result_t App_Init(const W5500_Board_Config_t *board_cfg, W5500_Network_Config_t *network_cfg);
+int App_FactoryReset(void);
 void App_EnsureCommunicationReady(void);
 App_Network_Result_t App_NetworkPoll(void);
 int App_RefreshServerConfig(void);

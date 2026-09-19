@@ -72,5 +72,5 @@ int W5500_ResolveServerConfig(void);
 int W5500_RefreshServerConfig(void);
 W5500_Config_Result_t W5500_LoadOrCreateConfig(W5500_Network_Config_t *cfg);
 int W5500_ResolveServerConfig(void);
-
+int W5500_FactoryReset_Flash_Config(void);
 W5500_HTTP_Result_t W5500_HTTP_POST_JSON(const char *endpoint, const char *payload);
